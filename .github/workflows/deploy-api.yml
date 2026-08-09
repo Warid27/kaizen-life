@@ -39,23 +39,30 @@ jobs:
         run: |
           DB_ID="${{ steps.d1.outputs.database_id }}"
           echo "D1 Database ID: $DB_ID"
-          cat > apps/api/wrangler.toml << EOF
-          name = "kaizenlife-api"
-          main = "src/index.ts"
-          compatibility_date = "2024-12-01"
-          compatibility_flags = ["nodejs_compat"]
+          if [ -n "$DB_ID" ]; then
+            # Only overwrite when we REALLY created the DB. If it already
+            # exists, d1 create fails and DB_ID is empty - keep the committed
+            # database_id (apps/api/wrangler.toml) as-is.
+            cat > apps/api/wrangler.toml << EOF
+            name = "kaizenlife-api"
+            main = "src/index.ts"
+            compatibility_date = "2024-12-01"
+            compatibility_flags = ["nodejs_compat"]
 
-          [vars]
-          ENVIRONMENT = "production"
+            [vars]
+            ENVIRONMENT = "production"
 
-          [[d1_databases]]
-          binding = "DB"
-          database_name = "kaizenlife-db"
-          database_id = "$DB_ID"
+            [[d1_databases]]
+            binding = "DB"
+            database_name = "kaizenlife-db"
+            database_id = "$DB_ID"
 
-          [build]
-          command = "bun install"
-          EOF
+            [build]
+            command = "bun install"
+            EOF
+          else
+            echo "Database already exists - keeping committed apps/api/wrangler.toml"
+          fi
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3

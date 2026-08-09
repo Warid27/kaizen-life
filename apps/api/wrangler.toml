@@ -9,7 +9,7 @@ ENVIRONMENT = "production"
 [[d1_databases]]
 binding = "DB"
 database_name = "kaizenlife-db"
-database_id = "" # Filled by deploy workflow (`wrangler d1 create`)
+database_id = "3a564ea9-7aa6-4a27-8fb2-6fe55a15d52e"
 
 [build]
 command = "bun install"
