@@ -51,18 +51,18 @@ interface ImportSession {
 
 const sessions = new Map<string, ImportSession>();
 
-// Cleanup sessions older than 1 hour, checked every 5 minutes
-const CLEANUP_INTERVAL_MS = 300_000;
+// Cleanup sessions older than 1 hour. Purged lazily on access because
+// Workers forbids setInterval at module scope.
 const SESSION_TTL_MS = 3_600_000;
 
-setInterval(() => {
+function purgeExpiredSessions() {
   const now = Date.now();
   for (const [key, session] of sessions.entries()) {
     if (now - session.createdAt > SESSION_TTL_MS) {
       sessions.delete(key);
     }
   }
-}, CLEANUP_INTERVAL_MS);
+}
 
 // ---------------------------------------------------------------------------
 // Table lookup map
@@ -154,6 +154,7 @@ importRouter.post("/import/upload", async (c) => {
     const headers = Object.keys(data[0]!);
 
     const sessionId = crypto.randomUUID();
+    purgeExpiredSessions();
     sessions.set(sessionId, { data, headers, createdAt: Date.now() });
 
     return c.json({
@@ -542,6 +543,7 @@ importRouter.post(
   async (c) => {
     const { sessionId, entityType, mapping } = c.req.valid("json");
 
+    purgeExpiredSessions();
     const session = sessions.get(sessionId);
     if (!session) {
       return c.json({ error: "Session not found or expired" }, 404);
@@ -606,6 +608,7 @@ importRouter.post(
     const db = c.get("db");
     const { sessionId, entityType, mapping } = c.req.valid("json");
 
+    purgeExpiredSessions();
     const session = sessions.get(sessionId);
     if (!session) {
       return c.json({ error: "Session not found or expired" }, 404);
