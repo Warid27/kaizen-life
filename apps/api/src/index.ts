@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { Bindings, AppDb, createDb } from "./db/client";
 import health from "./routes/health";
 import capture from "./routes/capture";
@@ -24,6 +25,22 @@ import importRouter from "./routes/import";
 type Variables = { db: AppDb };
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+// ─── Middleware: CORS (web app lives on a different origin in prod) ───────────
+app.use(
+  "*",
+  cors({
+    origin: [
+      "https://kaizen-life.warid.web.id",
+      "https://kaizenlife-app.pages.dev",
+      "http://localhost:4321",
+      "http://localhost:3001",
+    ],
+    allowMethods: ["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
+    allowHeaders: ["Content-Type"],
+    maxAge: 86400,
+  }),
+);
 
 // ─── Middleware: inject D1-backed db into context ────────────────────────────
 app.use("*", async (c, next) => {
