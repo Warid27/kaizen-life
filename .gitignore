@@ -1,0 +1,56 @@
+# dependencies
+node_modules
+
+# output
+dist
+out
+*.tgz
+
+# code coverage
+coverage/
+*.lcov
+
+# logs
+logs/
+*.log
+dev-*.txt
+dev-test*.log
+server*.log
+
+# dotenv environment variable files
+.env
+.env.*
+!.env.example
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+.astro/
+.wrangler/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+backups/
+
+# SDD tooling
+.omo/
+_verify_*.txt
+
+# Local screenshots
+screenshots/
+
+# Bun
+.bunr
+.buninstall

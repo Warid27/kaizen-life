@@ -1,0 +1,23 @@
+{
+  "name": "kaizenlife",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:api": "bun --cwd apps/api dev",
+    "dev:web": "bun --cwd apps/web dev",
+    "build:api": "bun --cwd apps/api build",
+    "build:web": "bun --cwd apps/web build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "bun --cwd apps/api db:generate",
+    "db:push": "bun --cwd apps/api db:push",
+    "db:studio": "bun --cwd apps/api db:studio"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.0",
+    "jsdom": "^30.0.1",
+    "vitest": "^4.1.10"
+  }
+}

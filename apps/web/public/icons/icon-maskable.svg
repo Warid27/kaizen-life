@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- Maskable icon: safe zone is inner 80% (40px padding) -->
+  <rect width="512" height="512" fill="#0f172a"/>
+  <rect x="40" y="40" width="432" height="432" rx="60" fill="#0f172a"/>
+  <text x="256" y="336" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="260" font-weight="bold" fill="white">K</text>
+</svg>

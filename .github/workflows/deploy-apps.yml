@@ -2,12 +2,16 @@ name: Deploy Frontend to Cloudflare Pages
 
 on:
   push:
-    branches: [apps]
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'packages/**'
+      - '.github/workflows/deploy-apps.yml'
   workflow_dispatch:
 
 env:
-  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CUSTOM_DOMAIN: kaizen-life.warid.web.id
+  PAGES_PROJECT: kaizenlife-app
 
 jobs:
   deploy:
@@ -24,12 +28,74 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Create Pages project if not exists
+        run: |
+          npx wrangler pages project create $PAGES_PROJECT --production-branch=main 2>&1 || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Set Cloudflare Pages environment variables
+        run: |
+          curl -s -X PATCH \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{
+              "deployment_configs": {
+                "production": {
+                  "env_vars": {
+                    "PUBLIC_API_URL": {
+                      "value": "https://kaizenlife-api.warid.web.id"
+                    }
+                  }
+                }
+              }
+            }' \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PAGES_PROJECT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Build
         run: bun run build
+        working-directory: apps/web
+        env:
+          PUBLIC_API_URL: https://kaizenlife-api.warid.web.id
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=kaizenlife-app
+          workingDirectory: apps/web
+          command: pages deploy dist --project-name=kaizenlife-app --commit-dirty=true
+
+      - name: Setup custom domain
+        run: |
+          # Check if domain is already connected
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PAGES_PROJECT/domains/$CUSTOM_DOMAIN")
+
+          if [ "$STATUS" = "200" ]; then
+            echo "Custom domain $CUSTOM_DOMAIN already connected."
+          else
+            echo "Connecting custom domain $CUSTOM_DOMAIN..."
+            RESULT=$(curl -s -X POST \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data "{\"name\":\"$CUSTOM_DOMAIN\"}" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PAGES_PROJECT/domains")
+            echo "$RESULT" | python3 -m json.tool 2>/dev/null || echo "$RESULT"
+
+            # Check if DNS needs setup
+            if echo "$RESULT" | grep -q '"success":true'; then
+              echo "Domain connected! DNS verification may take a few minutes."
+            else
+              echo "Warning: Domain setup may need manual DNS configuration."
+              echo "Add a CNAME record: $CUSTOM_DOMAIN -> $PAGES_PROJECT.pages.dev"
+            fi
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

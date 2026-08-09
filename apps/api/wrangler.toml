@@ -1,20 +1,16 @@
 name = "kaizenlife-api"
 main = "src/index.ts"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
 ENVIRONMENT = "production"
 
-[[kv_namespaces]]
-binding = "KV"
-id = ""
-
 [[d1_databases]]
 binding = "DB"
 database_name = "kaizenlife-db"
-database_id = ""
+database_id = "" # Filled by deploy workflow (`wrangler d1 create`)
 
 [build]
-command = "bun install && bun run build"
+command = "bun install"
 watch_dir = "src"

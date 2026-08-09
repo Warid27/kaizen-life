@@ -2,12 +2,12 @@ name: Deploy API to Cloudflare Workers
 
 on:
   push:
-    branches: [api]
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'packages/**'
+      - '.github/workflows/deploy-api.yml'
   workflow_dispatch:
-
-env:
-  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
 jobs:
   deploy:
@@ -24,18 +24,43 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Run database migrations
-        run: bun run db:migrate
+      - name: Create D1 database if not exists
+        id: d1
+        run: |
+          RESULT=$(npx wrangler d1 create kaizenlife-db --config apps/api/wrangler.toml 2>&1) || true
+          echo "$RESULT"
+          DB_ID=$(echo "$RESULT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+          echo "database_id=$DB_ID" >> $GITHUB_OUTPUT
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Seed database
-        run: bun run db:seed
+      - name: Configure wrangler.toml with D1 binding
+        run: |
+          DB_ID="${{ steps.d1.outputs.database_id }}"
+          echo "D1 Database ID: $DB_ID"
+          cat > apps/api/wrangler.toml << EOF
+          name = "kaizenlife-api"
+          main = "src/index.ts"
+          compatibility_date = "2024-12-01"
+          compatibility_flags = ["nodejs_compat"]
 
-      - name: Build for Cloudflare Workers
-        run: bun run build
+          [vars]
+          ENVIRONMENT = "production"
+
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "kaizenlife-db"
+          database_id = "$DB_ID"
+
+          [build]
+          command = "bun install"
+          EOF
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/api
           command: deploy

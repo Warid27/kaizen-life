@@ -1,0 +1,43 @@
+import { z } from "zod";
+
+// ─── Create Transaction ─────────────────────────────────────────────────────
+export const CreateTransactionSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
+  type: z.enum(["income", "expense"]),
+  amountCents: z.number().int().min(0, "Amount must be non-negative"),
+  category: z.string().min(1, "Category is required"),
+  account: z.enum(["cash", "bank"]),
+  note: z.string().optional(),
+});
+
+export type CreateTransactionInput = z.infer<typeof CreateTransactionSchema>;
+
+// ─── Update Transaction ─────────────────────────────────────────────────────
+export const UpdateTransactionSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD").optional(),
+  type: z.enum(["income", "expense"]).optional(),
+  amountCents: z.number().int().min(0, "Amount must be non-negative").optional(),
+  category: z.string().min(1).optional(),
+  account: z.enum(["cash", "bank"]).optional(),
+  note: z.string().optional(),
+});
+
+export type UpdateTransactionInput = z.infer<typeof UpdateTransactionSchema>;
+
+// ─── Transaction Query (list filter) ────────────────────────────────────────
+export const TransactionQuerySchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  type: z.enum(["income", "expense"]).optional(),
+  category: z.string().optional(),
+  account: z.enum(["cash", "bank"]).optional(),
+});
+
+export type TransactionQuery = z.infer<typeof TransactionQuerySchema>;
+
+// ─── Finance Summary Query ──────────────────────────────────────────────────
+export const FinanceSummarySchema = z.object({
+  month: z.string().regex(/^\d{4}-\d{2}$/, "Month must be YYYY-MM"),
+});
+
+export type FinanceSummaryQuery = z.infer<typeof FinanceSummarySchema>;

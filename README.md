@@ -8,14 +8,20 @@ A single local application that replaces scattered apps (calendar, todo, habit t
 
 - **Frontend:** Astro + TypeScript + shadcn/ui + React
 - **Backend:** Bun + Hono
-- **Database:** SQLite + Drizzle ORM
+- **Database:** SQLite + Drizzle ORM (D1 on Cloudflare)
 - **State:** Zustand + TanStack Query
 
-## Branches
+## Monorepo Structure
 
-- `main` - This README
-- `api` - Backend API (Hono + Drizzle)
-- `apps` - Frontend Web App (Astro + React)
+```
+.
+├── apps/
+│   ├── api/        # Backend API (Hono + Drizzle) - deployed to Cloudflare Workers
+│   └── web/        # Frontend Web App (Astro + React) - deployed to Cloudflare Pages
+├── packages/
+│   └── shared/     # Shared Zod schemas + import logic (used by both apps)
+└── .github/workflows/  # Path-filtered CI/CD (deploys only what changed)
+```
 
 ## Getting Started
 
@@ -27,27 +33,46 @@ A single local application that replaces scattered apps (calendar, todo, habit t
 ```bash
 # Clone the repository
 git clone https://github.com/Warid27/kaizen-life.git
+cd kaizen-life
 
-# Switch to the api branch for backend
-git checkout api
-
-# Install dependencies
+# Install all workspace dependencies from the root
 bun install
+```
 
-# Run database migrations
-bun run db:migrate
+### Development
 
-# Seed the database
-bun run db:seed
+Run the API and web app side by side (two terminals, or use the root scripts):
 
-# Start the development server
-bun run dev
+```bash
+# Terminal 1: Backend API on http://localhost:3001
+bun run dev:api
+
+# Terminal 2: Frontend on http://localhost:4321
+bun run dev:web
 ```
 
 ### Access the App
 
 - **Frontend:** http://localhost:4321
 - **Backend API:** http://localhost:3001
+
+### Database & Tests
+
+```bash
+# Generate + apply migrations (from apps/api)
+bun run db:generate
+bun run db:migrate
+
+# Run the workspace test suite from the root
+bun run test
+```
+
+### Build
+
+```bash
+bun run build:api   # bundles the Worker
+bun run build:web   # builds the static site
+```
 
 ## Features
 
