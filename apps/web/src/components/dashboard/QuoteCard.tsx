@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronDown, Quote } from "lucide-react";
@@ -28,7 +28,14 @@ function getQuoteOfTheDay() {
 
 export function QuoteCard() {
   const [open, setOpen] = useState(true);
-  const quote = getQuoteOfTheDay();
+  // Use first quote for SSR to match server HTML, then update on client via useEffect.
+  // Date.now() differs between build-time SSR and client hydration when the cached page
+  // is served days later, causing React #418 text mismatch.
+  const [quote, setQuote] = useState(QUOTES[0]);
+
+  useEffect(() => {
+    setQuote(getQuoteOfTheDay());
+  }, []);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
