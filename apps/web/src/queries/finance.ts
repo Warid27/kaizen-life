@@ -57,7 +57,7 @@ export function useTransactions(filters?: TransactionFilter) {
     queryKey: financeKeys.transactionList(filters),
     queryFn: ({ signal }) =>
       apiGet<Transaction[]>(
-        '/api/finance/transactions',
+        '/api/transactions',
         filters as Record<string, string | undefined>,
         signal,
       ),
@@ -71,7 +71,7 @@ export function useMonthlySummary(month: string) {
     queryKey: financeKeys.monthlySummary(month),
     queryFn: ({ signal }) =>
       apiGet<MonthlySummary>(
-        `/api/finance/monthly/${month}`,
+        `/api/finance/summary?month=${month}`,
         undefined,
         signal,
       ),
@@ -86,7 +86,7 @@ export function useCreateTransaction() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: CreateTransaction) =>
-      apiPost<Transaction>('/api/finance/transactions', data),
+      apiPost<Transaction>('/api/transactions', data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: financeKeys.all });
       qc.invalidateQueries({ queryKey: ['dashboard'] });

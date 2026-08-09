@@ -75,26 +75,30 @@ function generateDemoGoals(): Goal[] {
       id: 'a1',
       title: 'Save $20,000',
       description: 'Build emergency fund to 6 months expenses',
-      level: 'annual',
-      parentId: null,
+      type: 'annual',
+      periodStart: `${new Date().getFullYear()}-01-01`,
+      periodEnd: `${new Date().getFullYear()}-12-31`,
       targetValue: 20000,
       currentValue: 8500,
       unit: 'dollars',
-      deadline: `${new Date().getFullYear()}-12-31`,
-      status: 'active',
+      status: 'in_progress',
+      parentGoalId: null,
+      linkedHabitId: null,
       createdAt: `${new Date().getFullYear()}-01-01`,
     },
     {
       id: 'a2',
       title: 'Ship 3 side projects',
       description: 'Launch and maintain 3 products',
-      level: 'annual',
-      parentId: null,
+      type: 'annual',
+      periodStart: `${new Date().getFullYear()}-01-01`,
+      periodEnd: `${new Date().getFullYear()}-12-31`,
       targetValue: 3,
       currentValue: 1,
       unit: 'projects',
-      deadline: `${new Date().getFullYear()}-12-31`,
-      status: 'active',
+      status: 'in_progress',
+      parentGoalId: null,
+      linkedHabitId: null,
       createdAt: `${new Date().getFullYear()}-01-01`,
     },
     // Monthly (children of a1)
@@ -102,26 +106,30 @@ function generateDemoGoals(): Goal[] {
       id: 'm1',
       title: 'Save $1,667',
       description: 'Monthly savings target',
-      level: 'monthly',
-      parentId: 'a1',
+      type: 'monthly',
+      periodStart: `${currentMonth()}-01`,
+      periodEnd: `${currentMonth()}-28`,
       targetValue: 1667,
       currentValue: 1450,
       unit: 'dollars',
-      deadline: `${currentMonth()}-28`,
-      status: 'active',
+      status: 'in_progress',
+      parentGoalId: 'a1',
+      linkedHabitId: null,
       createdAt: `${currentMonth()}-01`,
     },
     {
       id: 'm2',
       title: 'Ship MVP of KaizenLife',
       description: 'Core features complete',
-      level: 'monthly',
-      parentId: 'a2',
+      type: 'monthly',
+      periodStart: `${currentMonth()}-01`,
+      periodEnd: `${currentMonth()}-30`,
       targetValue: 100,
       currentValue: 65,
       unit: 'percent',
-      deadline: `${currentMonth()}-30`,
-      status: 'active',
+      status: 'in_progress',
+      parentGoalId: 'a2',
+      linkedHabitId: null,
       createdAt: `${currentMonth()}-01`,
     },
     // Weekly (children of m1)
@@ -129,26 +137,30 @@ function generateDemoGoals(): Goal[] {
       id: 'w1',
       title: 'Save $417',
       description: 'Weekly savings transfer',
-      level: 'weekly',
-      parentId: 'm1',
+      type: 'weekly',
+      periodStart: currentMonth(),
+      periodEnd: currentMonth(),
       targetValue: 417,
       currentValue: 417,
       unit: 'dollars',
-      deadline: null,
       status: 'completed',
+      parentGoalId: 'm1',
+      linkedHabitId: null,
       createdAt: currentMonth(),
     },
     {
       id: 'w2',
       title: 'No impulse purchases',
       description: 'Stick to budget',
-      level: 'weekly',
-      parentId: 'm1',
+      type: 'weekly',
+      periodStart: currentMonth(),
+      periodEnd: currentMonth(),
       targetValue: 7,
       currentValue: 5,
       unit: 'days',
-      deadline: null,
-      status: 'active',
+      status: 'in_progress',
+      parentGoalId: 'm1',
+      linkedHabitId: null,
       createdAt: currentMonth(),
     },
   ];
@@ -163,8 +175,8 @@ function buildHierarchy(goals: Goal[]): Goal[] {
   }
   for (const g of goals) {
     const node = map.get(g.id)!;
-    if (g.parentId && map.has(g.parentId)) {
-      map.get(g.parentId)!.children.push(node);
+    if (g.parentGoalId && map.has(g.parentGoalId)) {
+      map.get(g.parentGoalId)!.children.push(node);
     } else {
       roots.push(node);
     }
@@ -198,7 +210,7 @@ function GoalsContent() {
   const hierarchy = useMemo(() => buildHierarchy(goalList), [goalList]);
 
   // Stats
-  const activeGoals = goalList.filter((g) => g.status === 'active');
+  const activeGoals = goalList.filter((g) => g.status === 'in_progress' || g.status === 'not_started');
   const completedGoals = goalList.filter((g) => g.status === 'completed');
   const overallProgress =
     activeGoals.length > 0
@@ -234,8 +246,10 @@ function GoalsContent() {
     createMut.mutate(
       {
         ...data,
-        level: formLevel,
-        parentId,
+        type: formLevel,
+        parentGoalId: parentId,
+        periodStart: `${new Date().getFullYear()}-01-01`,
+        periodEnd: `${new Date().getFullYear()}-12-31`,
       },
       { onSuccess: () => setFormOpen(false) },
     );
@@ -246,7 +260,7 @@ function GoalsContent() {
       id: goal.id,
       data: {
         currentValue: newValue,
-        status: newValue >= goal.targetValue ? 'completed' : 'active',
+        status: newValue >= goal.targetValue ? 'completed' : 'in_progress',
       },
     });
   };
@@ -371,14 +385,14 @@ function GoalNode({
   onAddChild,
   onProgress,
 }: GoalNodeProps) {
-  const meta = LEVEL_META[goal.level];
+  const meta = LEVEL_META[goal.type];
   const pct = Math.min(Math.round((goal.currentValue / goal.targetValue) * 100), 100);
   const hasChildren = goal.children && goal.children.length > 0;
   const isExpanded = expandedIds.has(goal.id);
   const isCompleted = goal.status === 'completed';
 
   const nextLevel: GoalLevel | null =
-    goal.level === 'annual' ? 'monthly' : goal.level === 'monthly' ? 'weekly' : null;
+    goal.type === 'annual' ? 'monthly' : goal.type === 'monthly' ? 'weekly' : null;
 
   return (
     <div style={{ marginLeft: depth * 16 }}>
@@ -448,10 +462,10 @@ function GoalNode({
                 </span>
               </div>
 
-              {goal.deadline && (
+              {goal.periodEnd && (
                 <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
                   <Calendar className="h-3 w-3" />
-                  Due {goal.deadline}
+                  Due {goal.periodEnd}
                 </div>
               )}
             </div>
