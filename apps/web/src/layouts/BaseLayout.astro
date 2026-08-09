@@ -1,6 +1,7 @@
 ---
 import '../styles/global.css';
 import CommandPaletteMount from '../islands/CommandPaletteMount';
+import DateDisplay from '../islands/DateDisplay';
 import ReminderBell from '../components/shared/ReminderBell';
 
 interface Props {
@@ -9,13 +10,6 @@ interface Props {
 }
 
 const { title = 'KaizenLife', description = 'Become 1% Better Every Day' } = Astro.props;
-
-const today = new Date().toLocaleDateString('en-US', {
-  weekday: 'long',
-  year: 'numeric',
-  month: 'long',
-  day: 'numeric',
-});
 
 const navSections = [
   {
@@ -217,7 +211,7 @@ const iconSvgs: Record<string, string> = {
         <!-- Topbar -->
         <header class="flex h-14 items-center justify-between border-b border-border bg-background px-4">
           <div class="flex items-center gap-3">
-            <h1 class="text-sm font-semibold text-foreground">{today}</h1>
+            <DateDisplay client:only="react" />
           </div>
 
           <div class="flex items-center gap-2">
