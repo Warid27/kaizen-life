@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1786945342072,
+      "tag": "0000_optimal_pepper_potts",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786948370511,
+      "tag": "0001_lame_the_call",
+      "breakpoints": true
+    }
+  ]
+}
