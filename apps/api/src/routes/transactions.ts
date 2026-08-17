@@ -8,6 +8,7 @@ import {
   UpdateTransactionSchema,
   TransactionQuerySchema,
   FinanceSummarySchema,
+  DEFAULT_CURRENCY,
 } from "@kaizenlife/shared";
 
 const transactionsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
@@ -83,6 +84,7 @@ transactionsRouter.get(
       .select({
         type: transactions.type,
         amountCents: transactions.amountCents,
+        currency: transactions.currency,
         category: transactions.category,
       })
       .from(transactions)
@@ -96,34 +98,56 @@ transactionsRouter.get(
       )
       .all();
 
-    let incomeCents = 0;
-    let expenseCents = 0;
-    const byCategory: Record<string, { incomeCents: number; expenseCents: number }> = {};
+    // Aggregate per currency — mixing amounts across currencies is meaningless.
+    type CurrencyBucket = {
+      incomeCents: number;
+      expenseCents: number;
+      transactionCount: number;
+      byCategory: { category: string; amountCents: number; type: "income" | "expense" }[];
+    };
+    const byCurrency: Record<string, CurrencyBucket> = {};
 
     for (const tx of rows) {
-      if (tx.type === "income") {
-        incomeCents += tx.amountCents;
-      } else {
-        expenseCents += tx.amountCents;
-      }
+      const bucket =
+        byCurrency[tx.currency] ??
+        (byCurrency[tx.currency] = {
+          incomeCents: 0,
+          expenseCents: 0,
+          transactionCount: 0,
+          byCategory: [],
+        });
+      bucket.transactionCount += 1;
 
-      if (!byCategory[tx.category]) {
-        byCategory[tx.category] = { incomeCents: 0, expenseCents: 0 };
-      }
       if (tx.type === "income") {
-        byCategory[tx.category].incomeCents += tx.amountCents;
+        bucket.incomeCents += tx.amountCents;
       } else {
-        byCategory[tx.category].expenseCents += tx.amountCents;
+        bucket.expenseCents += tx.amountCents;
       }
+      bucket.byCategory.push({
+        category: tx.category,
+        amountCents: tx.amountCents,
+        type: tx.type,
+      });
     }
+
+    // Flat fields mirror the primary currency for backwards compatibility.
+    const primary = byCurrency[DEFAULT_CURRENCY] ?? Object.values(byCurrency)[0] ?? {
+      incomeCents: 0,
+      expenseCents: 0,
+      transactionCount: 0,
+      byCategory: [],
+    };
 
     return c.json({
       month,
-      incomeCents,
-      expenseCents,
-      netCents: incomeCents - expenseCents,
-      transactionCount: rows.length,
-      byCategory,
+      primaryCurrency: DEFAULT_CURRENCY,
+      currencies: Object.keys(byCurrency),
+      byCurrency,
+      incomeCents: primary.incomeCents,
+      expenseCents: primary.expenseCents,
+      netCents: primary.incomeCents - primary.expenseCents,
+      transactionCount: primary.transactionCount,
+      byCategory: primary.byCategory,
     });
   },
 );

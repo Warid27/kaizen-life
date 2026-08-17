@@ -27,6 +27,13 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
+  formatCents,
+  formatCentsCompact,
+  CURRENCY_OPTIONS,
+  DEFAULT_CURRENCY,
+} from '@/lib/currency';
+import type { Currency } from '@kaizenlife/shared';
+import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
@@ -49,10 +56,6 @@ ChartJS.register(
 );
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
 
 function currentMonth(): string {
   const d = new Date();
@@ -103,6 +106,7 @@ function generateDemoTransactions(): Transaction[] {
         id: `exp-${i}-${j}`,
         type: 'expense',
         amountCents: [850, 1200, 2500, 4500, 680, 1500, 3200][(i + j) % 7] * 100,
+        currency: DEFAULT_CURRENCY,
         category: EXPENSE_CATEGORIES[(i + j) % EXPENSE_CATEGORIES.length],
         description: ['Lunch', 'Groceries', 'Uber', 'Electric bill', 'Netflix', 'Coffee', 'Gym'][(i + j) % 7],
         date,
@@ -116,6 +120,7 @@ function generateDemoTransactions(): Transaction[] {
         id: `inc-${i}`,
         type: 'income',
         amountCents: 3500000,
+        currency: DEFAULT_CURRENCY,
         category: 'Salary',
         description: 'Monthly salary',
         date,
@@ -208,6 +213,7 @@ function FinanceContent() {
 
   const handleCreate = (data: {
     amountCents: number;
+    currency: Currency;
     category: string;
     description: string;
     date: string;
@@ -430,7 +436,10 @@ function TransactionRow({ transaction: tx }: { transaction: Transaction }) {
           isIncome ? 'text-emerald-600' : 'text-foreground',
         )}
       >
-        {isIncome ? '+' : '-'}{formatCents(tx.amountCents)}
+        {isIncome ? '+' : '-'}{formatCents(tx.amountCents, tx.currency)}
+        <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9px] font-medium uppercase text-muted-foreground">
+          {tx.currency}
+        </span>
       </span>
     </div>
   );
@@ -471,7 +480,7 @@ function CategoryBarChart({
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: (ctx: any) => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(2)}`,
+          label: (ctx: any) => `${ctx.dataset.label}: ${formatCents(Math.round(ctx.parsed.y * 100))}`,
         },
       },
     },
@@ -489,7 +498,7 @@ function CategoryBarChart({
         ticks: {
           font: { size: 10 },
           color: 'hsl(215.4, 16.3%, 46.9%)',
-          callback: (v: any) => `$${v}`,
+          callback: (v: any) => formatCentsCompact(Math.round(v * 100)),
         },
       },
     },
@@ -543,7 +552,7 @@ function BalanceLineChart({
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: (ctx: any) => `Balance: $${ctx.parsed.y.toFixed(2)}`,
+          label: (ctx: any) => `Balance: ${formatCents(Math.round(ctx.parsed.y * 100))}`,
         },
       },
     },
@@ -561,7 +570,7 @@ function BalanceLineChart({
         ticks: {
           font: { size: 10 },
           color: 'hsl(215.4, 16.3%, 46.9%)',
-          callback: (v: any) => `$${v}`,
+          callback: (v: any) => formatCentsCompact(Math.round(v * 100)),
         },
       },
     },
@@ -598,6 +607,7 @@ function TransactionFormDialog({
   type: TransactionType;
   onSave: (data: {
     amountCents: number;
+    currency: Currency;
     category: string;
     description: string;
     date: string;
@@ -605,6 +615,7 @@ function TransactionFormDialog({
   isSaving: boolean;
 }) {
   const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState<Currency>(DEFAULT_CURRENCY);
   const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
   const [date, setDate] = useState(todayStr());
@@ -614,6 +625,7 @@ function TransactionFormDialog({
   const handleOpen = (isOpen: boolean) => {
     if (isOpen) {
       setAmount('');
+      setCurrency(DEFAULT_CURRENCY);
       setCategory(categories[0]);
       setDescription('');
       setDate(todayStr());
@@ -627,6 +639,7 @@ function TransactionFormDialog({
     if (isNaN(parsed) || parsed <= 0 || !description.trim()) return;
     onSave({
       amountCents: Math.round(parsed * 100),
+      currency,
       category,
       description: description.trim(),
       date,
@@ -643,17 +656,31 @@ function TransactionFormDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="tx-amount">Amount ($)</Label>
-            <Input
-              id="tx-amount"
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.00"
-              autoFocus
-            />
+            <Label htmlFor="tx-amount">Amount</Label>
+            <div className="flex gap-2">
+              <Input
+                id="tx-amount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                autoFocus
+              />
+              <Select
+                id="tx-currency"
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value as Currency)}
+                className="w-44 shrink-0"
+              >
+                {CURRENCY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="tx-category">Category</Label>

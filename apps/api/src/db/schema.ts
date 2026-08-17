@@ -370,6 +370,7 @@ export const transactions = sqliteTable("transactions", {
   date: text("date").notNull(),
   type: text("type", { enum: ["income", "expense"] }).notNull(),
   amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull().default("idr"),
   category: text("category").notNull(),
   account: text("account", { enum: ["cash", "bank"] }).notNull(),
   note: text("note"),

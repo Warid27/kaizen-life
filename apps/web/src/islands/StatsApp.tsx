@@ -22,6 +22,7 @@ import {
   FolderKanban,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCentsCompact } from '@/lib/currency';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -410,7 +411,7 @@ function StatsContent() {
                   ...baseScaleOptions(),
                   y: {
                     ...baseScaleOptions().y,
-                    ticks: { ...baseScaleOptions().y.ticks, callback: (v: any) => `$${v}` },
+                    ticks: { ...baseScaleOptions().y.ticks, callback: (v: any) => formatCentsCompact(Math.round(v * 100)) },
                   },
                 },
               }}

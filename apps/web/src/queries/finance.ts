@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost } from '@/lib/api-client';
+import type { Currency } from '@kaizenlife/shared';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -9,6 +10,7 @@ export interface Transaction {
   id: string;
   type: TransactionType;
   amountCents: number;
+  currency: Currency;
   category: string;
   description: string;
   date: string; // YYYY-MM-DD
@@ -18,6 +20,7 @@ export interface Transaction {
 export interface CreateTransaction {
   type: TransactionType;
   amountCents: number;
+  currency: Currency;
   category: string;
   description: string;
   date: string;

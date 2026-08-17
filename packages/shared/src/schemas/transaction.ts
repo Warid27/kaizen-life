@@ -1,10 +1,16 @@
 import { z } from "zod";
 
+// ─── Currencies ──────────────────────────────────────────────────────────────
+export const CURRENCIES = ["idr", "usd", "eur", "sgd", "myr", "jpy"] as const;
+export type Currency = (typeof CURRENCIES)[number];
+export const DEFAULT_CURRENCY: Currency = "idr";
+
 // ─── Create Transaction ─────────────────────────────────────────────────────
 export const CreateTransactionSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
   type: z.enum(["income", "expense"]),
   amountCents: z.number().int().min(0, "Amount must be non-negative"),
+  currency: z.enum(CURRENCIES).default(DEFAULT_CURRENCY),
   category: z.string().min(1, "Category is required"),
   account: z.enum(["cash", "bank"]),
   note: z.string().optional(),
@@ -17,6 +23,7 @@ export const UpdateTransactionSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD").optional(),
   type: z.enum(["income", "expense"]).optional(),
   amountCents: z.number().int().min(0, "Amount must be non-negative").optional(),
+  currency: z.enum(CURRENCIES).optional(),
   category: z.string().min(1).optional(),
   account: z.enum(["cash", "bank"]).optional(),
   note: z.string().optional(),
