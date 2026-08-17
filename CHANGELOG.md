@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Realistic Indonesian seed data seeder (`apps/api/src/db/seed.ts`) covering all 22 tables — coherent working-student life (college, freelance work, habits, finance in Rupiah, goals hierarchy) with dates relative to today
+- Seed CLI runner with `--local` / `--remote` targets via `wrangler d1 execute` (`bun run db:seed[:local|:remote]`) — idempotent, deletes existing data for `default-user` before re-inserting
+- Multi-currency support: `transactions.currency` column (ISO 4217: idr, usd, eur, sgd, myr, jpy) with `idr` default
+- Currency selector in finance transaction form, per-transaction currency badge in list, and locale-aware formatting via `Intl.NumberFormat` (Rp / $ / € / ¥ …) replacing the hardcoded dollar sign
+- Initial D1 migration (`drizzle/0000`) generated from schema; applied to local and remote databases
+- Six bodyweight workout habits in seed data (push up, pull up, dead hang, plank, body squat, wall sit)
+
+### Changed
+- `/api/finance/summary` now aggregates per currency (`byCurrency` + `primaryCurrency`); flat fields mirror the primary currency (`idr`) for backwards compatibility
+- `byCategory` in finance summary is now an array of `{ category, amountCents, type }` matching the web client's expected shape (previously a mismatched object)
+- Create/Update transaction schemas accept `currency` (defaults to `idr` when omitted)
+- `apps/api/wrangler.toml` now pins `account_id` for deterministic non-interactive deploy/remote commands
+
+### Infrastructure
+- D1 migrations applied to both local dev database and production (`kaizenlife-db`)
+- API worker and frontend Pages redeployed with currency support
+
 ## [0.0.1] - 2026-08-06
 
 ### Added

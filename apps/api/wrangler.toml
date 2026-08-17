@@ -2,6 +2,7 @@ name = "kaizenlife-api"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
+account_id = "8c9944621e329187d1e6bb37529be3e5"
 
 [vars]
 ENVIRONMENT = "production"

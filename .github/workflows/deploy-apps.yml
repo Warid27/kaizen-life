@@ -6,6 +6,7 @@ on:
     paths:
       - 'apps/web/**'
       - 'packages/**'
+      - 'CHANGELOG.md'
       - '.github/workflows/deploy-apps.yml'
   workflow_dispatch:
 
