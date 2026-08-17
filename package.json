@@ -13,7 +13,10 @@
     "test:watch": "vitest",
     "db:generate": "bun --cwd apps/api db:generate",
     "db:push": "bun --cwd apps/api db:push",
-    "db:studio": "bun --cwd apps/api db:studio"
+    "db:studio": "bun --cwd apps/api db:studio",
+    "db:seed": "bun --cwd apps/api db:seed",
+    "db:seed:local": "bun --cwd apps/api db:seed:local",
+    "db:seed:remote": "bun --cwd apps/api db:seed:remote"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^7.0.0",
