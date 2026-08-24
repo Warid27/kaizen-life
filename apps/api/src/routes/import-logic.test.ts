@@ -1,22 +1,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { Hono } from 'hono';
+import * as XLSX from 'xlsx';
 import {
   validateFile,
   purgeExpiredSessions,
   SESSION_TTL_MS,
   MAX_IMPORT_ROWS,
   MAX_IMPORT_COLUMNS,
-} from '../../../../apps/api/src/routes/import';
-import importRouter from '../../../../apps/api/src/routes/import';
-import type { Bindings, AppDb } from '../../../../apps/api/src/db/client';
+} from './import';
+import importRouter from './import';
+import type { Bindings, AppDb } from '../db/client';
 import { ENTITY_VALIDATION_SCHEMAS } from '@kaizenlife/shared';
-
-const requireFromApi = createRequire(
-  fileURLToPath(new URL('../../../../apps/api/package.json', import.meta.url)),
-);
-const XLSX = requireFromApi('xlsx') as typeof import('xlsx');
-const { Hono } = requireFromApi('hono') as typeof import('hono');
 
 type RouteApp = Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>;
 
