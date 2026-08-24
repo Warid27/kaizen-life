@@ -116,6 +116,23 @@ const iconSvgs: Record<string, string> = {
     <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
 
     <title>{title}</title>
+
+    <!-- Apply theme before first paint to avoid a light/dark flash (FOUC).
+         Mirrors applyTheme() in queries/settings.ts (kept dependency-free). -->
+    <script is:inline>
+      (() => {
+        try {
+          const stored = JSON.parse(localStorage.getItem('kaizenlife-settings') || '{}');
+          const theme = stored.theme || 'system';
+          const dark =
+            theme === 'dark' ||
+            (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', dark);
+        } catch {
+          /* noop */
+        }
+      })();
+    </script>
   </head>
   <body class="h-full overflow-hidden">
     <div class="flex h-full">
@@ -322,6 +339,9 @@ const iconSvgs: Record<string, string> = {
     </style>
 
     <script>
+      import { initThemeSystemListener } from '../queries/settings';
+      initThemeSystemListener();
+
       const sidebar = document.getElementById('sidebar');
       const toggle = document.getElementById('sidebar-toggle');
 

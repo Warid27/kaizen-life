@@ -100,3 +100,29 @@ export function saveLocalPrefs(prefs: LocalPrefs): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify({ ...getLocalPrefs(), ...prefs }));
 }
+
+// ─── Theme (class-based dark mode; CSS vars in global.css) ───────────────────
+
+export type ThemePref = 'light' | 'dark' | 'system';
+
+function systemPrefersDark(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+}
+
+/** Apply the resolved theme to <html> — the single place that toggles `.dark`. */
+export function applyTheme(theme: ThemePref): void {
+  if (typeof document === 'undefined') return;
+  const dark = theme === 'dark' || (theme === 'system' && systemPrefersDark());
+  document.documentElement.classList.toggle('dark', dark);
+}
+
+/**
+ * Re-apply the stored theme whenever the OS scheme flips while in "system"
+ * mode. Call once on app boot.
+ */
+export function initThemeSystemListener(): void {
+  if (typeof window === 'undefined' || !window.matchMedia) return;
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    applyTheme(getLocalPrefs().theme);
+  });
+}

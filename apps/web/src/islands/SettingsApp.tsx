@@ -6,6 +6,8 @@ import {
   useExportData,
   getLocalPrefs,
   saveLocalPrefs,
+  applyTheme,
+  type ThemePref,
 } from '@/queries/settings';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
@@ -294,14 +296,13 @@ function ProfileCard() {
 
 // ─── Appearance (local-only preference) ───────────────────────────────────────
 
-type ThemePref = 'light' | 'dark' | 'system';
-
 function AppearanceCard() {
   const [theme, setTheme] = useState<ThemePref>(() => getLocalPrefs().theme);
 
   const handleTheme = (value: ThemePref) => {
     setTheme(value);
     saveLocalPrefs({ theme: value });
+    applyTheme(value);
   };
 
   return (
