@@ -22,16 +22,10 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useUIStore } from '@/stores/ui';
+import { useUIStore, todayStr, shiftDays } from '@/stores/ui';
 import type { DiaryEntry, UpsertDiaryEntry } from '@kaizenlife/shared';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function daysAgo(n: number) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 function formatDate(dateStr: string) {
   return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
@@ -64,7 +58,7 @@ function DiaryContent() {
 
   // Fetch 90 days of entries for history
   const { data: entries, isLoading } = useDiaryEntries({
-    from: daysAgo(90),
+    from: shiftDays(todayStr(), -90),
   });
 
   const upsertMut = useUpsertDiaryEntry();
@@ -109,11 +103,7 @@ function DiaryContent() {
 
   // Date navigation
   const navigateDate = (offset: number) => {
-    const d = new Date(selectedDate + 'T00:00:00');
-    d.setDate(d.getDate() + offset);
-    setSelectedDate(
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
-    );
+    setSelectedDate(shiftDays(selectedDate, offset));
   };
 
   const handleSave = () => {

@@ -6,6 +6,11 @@ import { z } from "zod";
 
 const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
+// Sane upper bound for sleep/duration numerics (24h in minutes); a typo like
+// 4200 otherwise skews averages forever.
+const MAX_SLEEP_MINUTES = 1440;
+const sleepMinutesMessage = "Sleep duration cannot exceed 1440 minutes";
+
 /** Full check-in record returned from the API */
 export const CheckinSchema = z.object({
   id: z.string(),
@@ -13,8 +18,18 @@ export const CheckinSchema = z.object({
   date: z.string().regex(dateRegex, "Date must be YYYY-MM-DD"),
   bedTime: z.string().nullable().optional(),
   wakeTime: z.string().nullable().optional(),
-  napMinutes: z.number().int().nullable().optional(),
-  totalSleepMinutes: z.number().int().nullable().optional(),
+  napMinutes: z
+    .number()
+    .int()
+    .max(MAX_SLEEP_MINUTES, sleepMinutesMessage)
+    .nullable()
+    .optional(),
+  totalSleepMinutes: z
+    .number()
+    .int()
+    .max(MAX_SLEEP_MINUTES, sleepMinutesMessage)
+    .nullable()
+    .optional(),
   sleepQuality: z.number().int().min(1).max(5).nullable().optional(),
   mood: z.number().int().min(1).max(10).nullable().optional(),
   energy: z.number().int().min(1).max(10).nullable().optional(),
@@ -31,8 +46,19 @@ export type Checkin = z.infer<typeof CheckinSchema>;
 export const UpsertCheckinSchema = z.object({
   bedTime: z.string().nullable().optional(),
   wakeTime: z.string().nullable().optional(),
-  napMinutes: z.number().int().min(0).optional(),
-  totalSleepMinutes: z.number().int().min(0).nullable().optional(),
+  napMinutes: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_SLEEP_MINUTES, sleepMinutesMessage)
+    .optional(),
+  totalSleepMinutes: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_SLEEP_MINUTES, sleepMinutesMessage)
+    .nullable()
+    .optional(),
   sleepQuality: z.number().int().min(1).max(5).nullable().optional(),
   mood: z.number().int().min(1).max(10).nullable().optional(),
   energy: z.number().int().min(1).max(10).nullable().optional(),

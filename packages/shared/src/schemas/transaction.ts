@@ -38,6 +38,8 @@ export const TransactionQuerySchema = z.object({
   type: z.enum(["income", "expense"]).optional(),
   category: z.string().optional(),
   account: z.enum(["cash", "bank"]).optional(),
+  // Server-side pagination cap (P2): lists used to return the entire table.
+  limit: z.coerce.number().int().min(1).max(500).optional(),
 });
 
 export type TransactionQuery = z.infer<typeof TransactionQuerySchema>;

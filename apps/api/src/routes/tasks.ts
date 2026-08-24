@@ -1,15 +1,56 @@
 import { Hono } from "hono";
-import { Bindings, AppDb } from "../db/client";
-import { tasks } from "../db/schema";
+import type { Bindings, AppDb } from "../db/client";
+import { tasks, projects, courses } from "../db/schema";
 import { CreateTaskSchema, UpdateTaskSchema, TaskFilterSchema } from "@kaizenlife/shared";
 import { eq, and, isNull, gte, lte, desc } from "drizzle-orm";
+import { apiError, notFound } from "../lib/api";
 
-const tasksRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
+const tasksRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
-const USER_ID = "default-user";
+/** Validate that referenced parents exist and belong to the user (BL18). */
+async function validateReferences(
+  db: AppDb,
+  userId: string,
+  refs: { projectId?: string | null; courseId?: string | null },
+): Promise<{ ok: true } | { ok: false; response: Response }> {
+  if (refs.projectId) {
+    const parent = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, refs.projectId), eq(projects.userId, userId), isNull(projects.deletedAt)))
+      .get();
+    if (!parent) {
+      return {
+        ok: false,
+        response: Response.json(
+          { error: { code: "VALIDATION_ERROR", message: `Project ${refs.projectId} does not exist` } },
+          { status: 400 },
+        ),
+      };
+    }
+  }
+  if (refs.courseId) {
+    const parent = await db
+      .select({ id: courses.id })
+      .from(courses)
+      .where(and(eq(courses.id, refs.courseId), eq(courses.userId, userId), isNull(courses.deletedAt)))
+      .get();
+    if (!parent) {
+      return {
+        ok: false,
+        response: Response.json(
+          { error: { code: "VALIDATION_ERROR", message: `Course ${refs.courseId} does not exist` } },
+          { status: 400 },
+        ),
+      };
+    }
+  }
+  return { ok: true };
+}
 
 tasksRouter.get("/tasks", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const rawQuery: Record<string, string> = {};
   for (const [k, v] of Object.entries(c.req.query())) {
     if (v !== undefined) rawQuery[k] = v;
@@ -17,14 +58,11 @@ tasksRouter.get("/tasks", async (c) => {
   const parsed = TaskFilterSchema.safeParse(rawQuery);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Invalid query parameters", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Invalid query parameters", parsed.error.flatten());
   }
 
   const { date, dateFrom, dateTo, status, projectId, courseId, priority } = parsed.data;
-  const conditions = [eq(tasks.userId, USER_ID), isNull(tasks.deletedAt)];
+  const conditions = [eq(tasks.userId, userId), isNull(tasks.deletedAt)];
 
   if (date) {
     conditions.push(eq(tasks.date, date));
@@ -50,17 +88,23 @@ tasksRouter.get("/tasks", async (c) => {
 
 tasksRouter.post("/tasks", async (c) => {
   const db = c.get("db");
-  const body = await c.req.json();
-  const parsed = CreateTaskSchema.safeParse(body);
+  const userId = c.get("userId");
+  const parsed = CreateTaskSchema.safeParse(await c.req.json());
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const data = parsed.data;
+
+  // Referential validation on writes (BL18): dangling projectId/courseId
+  // used to create orphan rows that rendered forever.
+  const refCheck = await validateReferences(db, userId, {
+    projectId: data.projectId ?? null,
+    courseId: data.courseId ?? null,
+  });
+  if (!refCheck.ok) return refCheck.response;
+
   const now = Math.floor(Date.now() / 1000);
   const id = crypto.randomUUID();
 
@@ -68,7 +112,7 @@ tasksRouter.post("/tasks", async (c) => {
     .insert(tasks)
     .values({
       id,
-      userId: USER_ID,
+      userId,
       title: data.title,
       description: data.description ?? null,
       date: data.date ?? null,
@@ -77,6 +121,7 @@ tasksRouter.post("/tasks", async (c) => {
       estimatedDurationMin: data.estimatedDurationMin ?? null,
       priority: data.priority ?? "medium",
       status: data.status ?? "todo",
+      completedAt: data.status === "done" ? now : null,
       projectId: data.projectId ?? null,
       courseId: data.courseId ?? null,
       tags: data.tags ?? null,
@@ -91,16 +136,17 @@ tasksRouter.post("/tasks", async (c) => {
 
 tasksRouter.get("/tasks/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const row = await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.id, id), eq(tasks.userId, USER_ID), isNull(tasks.deletedAt)))
+    .where(and(eq(tasks.id, id), eq(tasks.userId, userId), isNull(tasks.deletedAt)))
     .get();
 
   if (!row) {
-    return c.json({ error: "Task not found" }, 404);
+    return notFound(c, "Task");
   }
 
   return c.json(row);
@@ -108,29 +154,32 @@ tasksRouter.get("/tasks/:id", async (c) => {
 
 tasksRouter.patch("/tasks/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
-  const body = await c.req.json();
-  const parsed = UpdateTaskSchema.safeParse(body);
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
+  const parsed = UpdateTaskSchema.safeParse(await c.req.json());
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const existing = await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.id, id), eq(tasks.userId, USER_ID), isNull(tasks.deletedAt)))
+    .where(and(eq(tasks.id, id), eq(tasks.userId, userId), isNull(tasks.deletedAt)))
     .get();
 
   if (!existing) {
-    return c.json({ error: "Task not found" }, 404);
+    return notFound(c, "Task");
   }
 
   const data = parsed.data;
   const now = Math.floor(Date.now() / 1000);
+
+  const refCheck = await validateReferences(db, userId, {
+    projectId: data.projectId ?? null,
+    courseId: data.courseId ?? null,
+  });
+  if (!refCheck.ok) return refCheck.response;
 
   const fieldsToUpdate: Record<string, unknown> = { updatedAt: now };
 
@@ -139,22 +188,29 @@ tasksRouter.patch("/tasks/:id", async (c) => {
   if (data.date !== undefined) fieldsToUpdate.date = data.date ?? null;
   if (data.startTime !== undefined) fieldsToUpdate.startTime = data.startTime ?? null;
   if (data.endTime !== undefined) fieldsToUpdate.endTime = data.endTime ?? null;
-  if (data.estimatedDurationMin !== undefined) fieldsToUpdate.estimatedDurationMin = data.estimatedDurationMin ?? null;
+  if (data.estimatedDurationMin !== undefined)
+    fieldsToUpdate.estimatedDurationMin = data.estimatedDurationMin ?? null;
   if (data.priority !== undefined) fieldsToUpdate.priority = data.priority;
   if (data.status !== undefined) {
     fieldsToUpdate.status = data.status;
-    if (data.status === "done" && !existing.completedAt) {
-      fieldsToUpdate.completedAt = now;
+    // BL15: completedAt must track the status machine — stamp on entering
+    // done, clear on leaving it. Previously a todo task kept a stale
+    // completedAt forever, corrupting any completed-at metric.
+    if (data.status === "done") {
+      fieldsToUpdate.completedAt = now; // re-stamp on every completion
+    } else {
+      fieldsToUpdate.completedAt = null;
     }
   }
   if (data.projectId !== undefined) fieldsToUpdate.projectId = data.projectId ?? null;
   if (data.courseId !== undefined) fieldsToUpdate.courseId = data.courseId ?? null;
   if (data.tags !== undefined) fieldsToUpdate.tags = data.tags ?? null;
 
+  // Guards kept in the write itself (B5).
   const updated = await db
     .update(tasks)
     .set(fieldsToUpdate)
-    .where(eq(tasks.id, id))
+    .where(and(eq(tasks.id, id), eq(tasks.userId, userId), isNull(tasks.deletedAt)))
     .returning()
     .get();
 
@@ -163,24 +219,21 @@ tasksRouter.patch("/tasks/:id", async (c) => {
 
 tasksRouter.delete("/tasks/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
-
-  const existing = await db
-    .select()
-    .from(tasks)
-    .where(and(eq(tasks.id, id), eq(tasks.userId, USER_ID), isNull(tasks.deletedAt)))
-    .get();
-
-  if (!existing) {
-    return c.json({ error: "Task not found" }, 404);
-  }
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const now = Math.floor(Date.now() / 1000);
 
-  await db.update(tasks)
+  const result = await db
+    .update(tasks)
     .set({ deletedAt: now, updatedAt: now })
-    .where(eq(tasks.id, id))
+    .where(and(eq(tasks.id, id), eq(tasks.userId, userId), isNull(tasks.deletedAt)))
+    .returning({ id: tasks.id })
     .run();
+
+  if (!result.success || result.meta.changes === 0) {
+    return notFound(c, "Task");
+  }
 
   return c.json({ success: true });
 });

@@ -20,21 +20,8 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useUIStore } from '@/stores/ui';
+import { useUIStore, todayStr, shiftDays } from '@/stores/ui';
 import type { Checkin, UpsertCheckin } from '@kaizenlife/shared';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function daysAgo(n: number) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 // ─── Default export ───────────────────────────────────────────────────────────
 
@@ -59,10 +46,16 @@ function CheckinContent() {
   const [stress, setStress] = useState<number | null>(null);
   const [note, setNote] = useState('');
 
-  // Fetch current day's check-in + 7 days for rolling averages
+  // Fetch current day's check-in + 7 days for rolling averages.
+  // BL3: the window must never invert — browsing deep into the past anchors
+  // the range on the selected date so entries stay visible.
+  const today = todayStr();
+  const historyFrom = selectedDate <= today ? shiftDays(selectedDate, -6) : shiftDays(today, -6);
+  const historyTo = selectedDate > today ? selectedDate : today;
+
   const { data: checkins, isLoading } = useCheckins({
-    from: daysAgo(6),
-    to: selectedDate,
+    from: historyFrom,
+    to: historyTo,
   });
 
   const upsertMut = useUpsertCheckin();
@@ -119,11 +112,7 @@ function CheckinContent() {
 
   // Date navigation
   const navigateDate = (offset: number) => {
-    const d = new Date(selectedDate + 'T00:00:00');
-    d.setDate(d.getDate() + offset);
-    setSelectedDate(
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
-    );
+    setSelectedDate(shiftDays(selectedDate, offset));
   };
 
   const handleSave = () => {

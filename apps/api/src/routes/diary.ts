@@ -7,30 +7,22 @@ import {
   UpsertDiaryEntrySchema,
   DiaryRangeSchema,
 } from "@kaizenlife/shared";
+import { apiError, validationHook } from "../lib/api";
 
-const diaryRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
-
-// Hardcoded user for now (no auth middleware yet)
-const USER_ID = "default-user";
+const diaryRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
 // ---------------------------------------------------------------------------
 // GET /diary — list diary entries, optional ?from=&to= date range filter
 // ---------------------------------------------------------------------------
 diaryRouter.get(
   "/diary",
-  zValidator("query", DiaryRangeSchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Invalid query parameters", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("query", DiaryRangeSchema, validationHook),
   async (c) => {
     const db = c.get("db");
+    const userId = c.get("userId");
     const { from, to } = c.req.valid("query");
 
-    const conditions = [eq(diaryEntries.userId, USER_ID), isNull(diaryEntries.deletedAt)];
+    const conditions = [eq(diaryEntries.userId, userId), isNull(diaryEntries.deletedAt)];
     if (from) conditions.push(gte(diaryEntries.date, from));
     if (to) conditions.push(lte(diaryEntries.date, to));
 
@@ -46,42 +38,38 @@ diaryRouter.get(
 );
 
 // ---------------------------------------------------------------------------
-// PUT /diary/:date — upsert a diary entry for a specific date
+// PUT /diary/:date — upsert a diary entry for a specific date.
+// Resurrects soft-deleted rows (G1): the previous code updated an invisible
+// soft-deleted row without clearing deletedAt, so saves silently vanished.
 // ---------------------------------------------------------------------------
 diaryRouter.put(
   "/diary/:date",
-  zValidator("json", UpsertDiaryEntrySchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Invalid body", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("json", UpsertDiaryEntrySchema, validationHook),
   async (c) => {
     const db = c.get("db");
-    const date = c.req.param("date");
+    const userId = c.get("userId");
+    const date = String(c.req.param("date"));
 
-    // Validate the date param matches YYYY-MM-DD
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return c.json({ error: "Date must be YYYY-MM-DD" }, 400);
+      return apiError(c, 400, "VALIDATION_ERROR", "Date must be YYYY-MM-DD");
     }
 
     const body = c.req.valid("json");
     const now = Math.floor(Date.now() / 1000);
 
-    // Check for existing row
+    // Look for ANY row for this date — including soft-deleted ones — so the
+    // unique index can never collide and saves always land visibly.
     const existing = await db
-      .select()
+      .select({ id: diaryEntries.id })
       .from(diaryEntries)
-      .where(and(eq(diaryEntries.userId, USER_ID), eq(diaryEntries.date, date)))
+      .where(and(eq(diaryEntries.userId, userId), eq(diaryEntries.date, date)))
       .get();
 
     if (existing) {
       const updated = await db
         .update(diaryEntries)
-        .set({ ...body, updatedAt: now })
-        .where(and(eq(diaryEntries.userId, USER_ID), eq(diaryEntries.date, date)))
+        .set({ ...body, deletedAt: null, updatedAt: now })
+        .where(and(eq(diaryEntries.userId, userId), eq(diaryEntries.date, date)))
         .returning()
         .get();
       return c.json(updated);
@@ -92,7 +80,7 @@ diaryRouter.put(
       .insert(diaryEntries)
       .values({
         id,
-        userId: USER_ID,
+        userId,
         date,
         ...body,
         createdAt: now,

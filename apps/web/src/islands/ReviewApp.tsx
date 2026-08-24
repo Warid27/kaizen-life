@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { QueryProvider } from '@/lib/query-provider';
 import {
   useMonthlyReview,
@@ -20,11 +20,9 @@ import {
   Target,
   BookOpen,
   ArrowRight,
-  Star,
-  Zap,
-  Heart,
+  AlertCircle,
+  Check,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -51,26 +49,39 @@ function nextMonth(month: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-// ─── Demo data ────────────────────────────────────────────────────────────────
+interface ReviewFormState {
+  biggestAchievement: string;
+  biggestLesson: string;
+  nextMonthPriorities: string;
+}
 
-function generateDemoReview(month: string): MonthlyReview {
-  return {
-    id: `review-${month}`,
-    month,
-    autoSummary:
-      'This month you completed 78% of habits, maintained a consistent sleep schedule averaging 7.2 hours, and made progress on 2 of 3 active projects. Financially, you saved $1,200 against your target of $1,667.',
-    achievements:
-      '• Shipped v1.0 of the finance module\n• Maintained 21-day meditation streak\n• Reduced daily screen time by 45 minutes',
-    lessons:
-      '• Week 3 energy dip correlates with skipping morning exercise\n• Meal prepping on Sundays saves ~$200/month\n• Need better time-blocking for deep work sessions',
-    nextPriorities:
-      '• Complete goals review UI module\n• Start running program (3x/week)\n• Review and optimize subscription spending',
-    mood: 4,
-    energy: 3,
-    satisfaction: 4,
-    createdAt: `${month}-01T00:00:00Z`,
-    updatedAt: `${month}-15T00:00:00Z`,
-  };
+const EMPTY_FORM: ReviewFormState = {
+  biggestAchievement: '',
+  biggestLesson: '',
+  nextMonthPriorities: '',
+};
+
+/**
+ * BL21/BL22: never fabricate content. Parse the server-provided auto summary
+ * JSON safely; on any surprise shape show the raw text or a neutral message.
+ */
+function describeAutoSummary(raw: string | null): string | null {
+  if (raw == null || raw === '') return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === 'string') return parsed;
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+      for (const key of ['summary', 'text', 'content']) {
+        const v = obj[key];
+        if (typeof v === 'string' && v.trim()) return v;
+      }
+      return JSON.stringify(parsed, null, 2);
+    }
+    return String(parsed);
+  } catch {
+    return raw; // not JSON — show as plain text
+  }
 }
 
 // ─── Default export ───────────────────────────────────────────────────────────
@@ -88,52 +99,58 @@ export default function ReviewApp() {
 function ReviewContent() {
   const [month, setMonth] = useState(currentMonth());
 
-  const { data: review, isLoading } = useMonthlyReview(month);
+  const { data: review, isPending } = useMonthlyReview(month);
   const upsertMut = useUpsertReview();
 
-  const reviewData = review ?? generateDemoReview(month);
+  // Editable fields — synced from the server record when its identity changes.
+  const [form, setForm] = useState<ReviewFormState>(EMPTY_FORM);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
 
-  // Editable fields
-  const [achievements, setAchievements] = useState<string | null>(null);
-  const [lessons, setLessons] = useState<string | null>(null);
-  const [nextPriorities, setNextPriorities] = useState<string | null>(null);
-  const [mood, setMood] = useState<number | null>(null);
-  const [energy, setEnergy] = useState<number | null>(null);
-  const [satisfaction, setSatisfaction] = useState<number | null>(null);
-
-  // Initialize form on data load
-  useMemo(() => {
-    if (reviewData) {
-      setAchievements(reviewData.achievements ?? '');
-      setLessons(reviewData.lessons ?? '');
-      setNextPriorities(reviewData.nextPriorities ?? '');
-      setMood(reviewData.mood ?? null);
-      setEnergy(reviewData.energy ?? null);
-      setSatisfaction(reviewData.satisfaction ?? null);
+  const syncKeyRef = useRef('');
+  useEffect(() => {
+    const key = `${month}:${review?.id ?? 'none'}:${review?.updatedAt ?? 0}`;
+    if (syncKeyRef.current === key) return;
+    syncKeyRef.current = key;
+    if (review) {
+      setForm({
+        biggestAchievement: review.biggestAchievement ?? '',
+        biggestLesson: review.biggestLesson ?? '',
+        nextMonthPriorities: review.nextMonthPriorities ?? '',
+      });
+    } else {
+      // No review for this month yet — start a blank create form.
+      setForm(EMPTY_FORM);
     }
-  }, [reviewData.id]);
+  }, [month, review]);
 
   const handleSave = () => {
-    upsertMut.mutate({
-      month,
-      data: {
-        achievements: achievements ?? undefined,
-        lessons: lessons ?? undefined,
-        nextPriorities: nextPriorities ?? undefined,
-        mood: mood ?? undefined,
-        energy: energy ?? undefined,
-        satisfaction: satisfaction ?? undefined,
+    setSaveError(null);
+    upsertMut.mutate(
+      { month, data: form },
+      {
+        onSuccess: () => {
+          setJustSaved(true);
+          setTimeout(() => setJustSaved(false), 2000);
+        },
+        onError: (err) => {
+          setSaveError(
+            err instanceof Error && err.message
+              ? err.message
+              : 'Failed to save review. Please try again.',
+          );
+        },
       },
-    });
+    );
   };
 
   const navigateMonth = (dir: 'prev' | 'next') => {
+    setSaveError(null);
+    setJustSaved(false);
     setMonth(dir === 'prev' ? prevMonth(month) : nextMonth(month));
   };
 
-  const moodEmojis = ['😔', '😐', '🙂', '😊', '🤩'];
-  const energyEmojis = ['😴', '🥱', '😊', '💪', '⚡'];
-  const satisfactionEmojis = ['😞', '😐', '🙂', '😊', '🥳'];
+  const autoSummary = describeAutoSummary(review?.autoSummaryJson ?? null);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-4 sm:p-6">
@@ -158,89 +175,88 @@ function ReviewContent() {
         </div>
       </div>
 
-      {/* Mood / Energy / Satisfaction */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <RatingCard
-          label="Mood"
-          icons={moodEmojis}
-          value={mood}
-          onChange={setMood}
-          icon={<Star className="h-4 w-4 text-amber-500" />}
-        />
-        <RatingCard
-          label="Energy"
-          icons={energyEmojis}
-          value={energy}
-          onChange={setEnergy}
-          icon={<Zap className="h-4 w-4 text-blue-500" />}
-        />
-        <RatingCard
-          label="Satisfaction"
-          icons={satisfactionEmojis}
-          value={satisfaction}
-          onChange={setSatisfaction}
-          icon={<Heart className="h-4 w-4 text-rose-500" />}
-        />
-      </div>
-
       {/* Auto-Drafted Summary */}
       <Card className="border-primary/20 bg-primary/[0.02]">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
             <Sparkles className="h-4 w-4 text-primary" />
             Auto-Drafted Summary
-            <Badge variant="secondary" className="ml-1 text-[10px]">
-              AI
-            </Badge>
+            {review && (
+              <Badge variant="secondary" className="ml-1 text-[10px]">
+                AI
+              </Badge>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isPending ? (
             <div className="space-y-2">
               <Skeleton className="h-4 w-full" />
               <Skeleton className="h-4 w-3/4" />
               <Skeleton className="h-4 w-1/2" />
             </div>
+          ) : autoSummary ? (
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/80">
+              {autoSummary}
+            </p>
           ) : (
-            <p className="text-sm leading-relaxed text-foreground/80">
-              {reviewData.autoSummary ?? 'No summary available yet. Complete your review to generate one.'}
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              No auto-generated summary for this month yet.
             </p>
           )}
         </CardContent>
       </Card>
 
+      {/* Empty state — honest: nothing exists yet, offer to create (BL21/BL22) */}
+      {!isPending && !review && (
+        <div className="flex items-start gap-3 rounded-lg border border-dashed border-border bg-muted/30 p-4">
+          <FileText className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-medium text-foreground">
+              No review for this month yet
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Fill in the sections below and save to create your review for{' '}
+              {monthLabel(month)}.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Input Sections */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Achievements */}
+        {/* Biggest Achievement */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
               <Target className="h-4 w-4 text-emerald-600" />
-              Achievements
+              Biggest Achievement
             </CardTitle>
           </CardHeader>
           <CardContent>
             <Textarea
-              value={achievements ?? ''}
-              onChange={(e) => setAchievements(e.target.value)}
-              placeholder="What did you accomplish this month? What are you proud of?"
+              value={form.biggestAchievement}
+              onChange={(e) =>
+                setForm({ ...form, biggestAchievement: e.target.value })
+              }
+              placeholder="What did you accomplish this month? What are you most proud of?"
               rows={5}
             />
           </CardContent>
         </Card>
 
-        {/* Lessons */}
+        {/* Biggest Lesson */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
               <BookOpen className="h-4 w-4 text-blue-600" />
-              Lessons Learned
+              Biggest Lesson
             </CardTitle>
           </CardHeader>
           <CardContent>
             <Textarea
-              value={lessons ?? ''}
-              onChange={(e) => setLessons(e.target.value)}
+              value={form.biggestLesson}
+              onChange={(e) => setForm({ ...form, biggestLesson: e.target.value })}
               placeholder="What did you learn? What would you do differently?"
               rows={5}
             />
@@ -258,65 +274,45 @@ function ReviewContent() {
         </CardHeader>
         <CardContent>
           <Textarea
-            value={nextPriorities ?? ''}
-            onChange={(e) => setNextPriorities(e.target.value)}
+            value={form.nextMonthPriorities}
+            onChange={(e) => setForm({ ...form, nextMonthPriorities: e.target.value })}
             placeholder="What are your top priorities for next month? List them out..."
             rows={4}
           />
         </CardContent>
       </Card>
 
+      {/* Feedback */}
+      {(saveError || justSaved) && (
+        <div
+          className={
+            saveError
+              ? 'flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'
+              : 'flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700'
+          }
+          role={saveError ? 'alert' : 'status'}
+        >
+          {saveError ? (
+            <>
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {saveError}
+            </>
+          ) : (
+            <>
+              <Check className="h-4 w-4 shrink-0" />
+              Review saved.
+            </>
+          )}
+        </div>
+      )}
+
       {/* Save Button */}
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={upsertMut.isPending}>
           <Save className="mr-1.5 h-4 w-4" />
-          {upsertMut.isPending ? 'Saving...' : 'Save Review'}
+          {upsertMut.isPending ? 'Saving...' : review ? 'Update Review' : 'Create Review'}
         </Button>
       </div>
     </div>
-  );
-}
-
-// ─── Rating Card ──────────────────────────────────────────────────────────────
-
-function RatingCard({
-  label,
-  icons,
-  value,
-  onChange,
-  icon,
-}: {
-  label: string;
-  icons: string[];
-  value: number | null;
-  onChange: (v: number) => void;
-  icon: React.ReactNode;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="mb-2 flex items-center gap-2">
-          {icon}
-          <span className="text-sm font-medium text-foreground">{label}</span>
-        </div>
-        <div className="flex gap-1.5">
-          {icons.map((emoji, i) => (
-            <button
-              key={i}
-              onClick={() => onChange(i + 1)}
-              className={cn(
-                'flex h-9 w-9 items-center justify-center rounded-lg border text-lg transition-all',
-                value === i + 1
-                  ? 'border-primary bg-primary/10 shadow-sm scale-110'
-                  : 'border-border hover:border-primary/30 hover:bg-muted/50',
-              )}
-              title={`${label}: ${i + 1}/5`}
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
   );
 }

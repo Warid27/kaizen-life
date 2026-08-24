@@ -10,10 +10,9 @@ import {
   TeamMemberFilterSchema,
 } from "@kaizenlife/shared";
 import { eq, and, isNull, gte, lte, desc } from "drizzle-orm";
+import { apiError, notFound } from "../lib/api";
 
-const standupsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
-
-const USER_ID = "default-user";
+const standupsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
 // ══════════════════════════════════════════════════════════════
 // TEAM MEMBERS
@@ -22,6 +21,7 @@ const USER_ID = "default-user";
 // ─── List Team Members ───────────────────────────────────────
 standupsRouter.get("/team-members", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const rawQuery: Record<string, string> = {};
   for (const [k, v] of Object.entries(c.req.query())) {
     if (v !== undefined) rawQuery[k] = v;
@@ -29,13 +29,10 @@ standupsRouter.get("/team-members", async (c) => {
   const parsed = TeamMemberFilterSchema.safeParse(rawQuery);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Invalid query parameters", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Invalid query parameters", parsed.error.flatten());
   }
 
-  const conditions = [eq(teamMembers.userId, USER_ID), isNull(teamMembers.deletedAt)];
+  const conditions = [eq(teamMembers.userId, userId), isNull(teamMembers.deletedAt)];
 
   if (parsed.data.active !== undefined) {
     conditions.push(eq(teamMembers.active, parsed.data.active));
@@ -54,18 +51,19 @@ standupsRouter.get("/team-members", async (c) => {
 // ─── Get Team Member by ID ───────────────────────────────────
 standupsRouter.get("/team-members/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const row = await db
     .select()
     .from(teamMembers)
     .where(
-      and(eq(teamMembers.id, id), eq(teamMembers.userId, USER_ID), isNull(teamMembers.deletedAt)),
+      and(eq(teamMembers.id, id), eq(teamMembers.userId, userId), isNull(teamMembers.deletedAt)),
     )
     .get();
 
   if (!row) {
-    return c.json({ error: "Team member not found" }, 404);
+    return notFound(c, "Team member");
   }
 
   return c.json(row);
@@ -74,14 +72,12 @@ standupsRouter.get("/team-members/:id", async (c) => {
 // ─── Create Team Member ──────────────────────────────────────
 standupsRouter.post("/team-members", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const body = await c.req.json();
   const parsed = CreateTeamMemberSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const data = parsed.data;
@@ -92,7 +88,7 @@ standupsRouter.post("/team-members", async (c) => {
     .insert(teamMembers)
     .values({
       id,
-      userId: USER_ID,
+      userId,
       name: data.name,
       role: data.role ?? null,
       active: data.active ?? true,
@@ -108,27 +104,25 @@ standupsRouter.post("/team-members", async (c) => {
 // ─── Update Team Member ──────────────────────────────────────
 standupsRouter.patch("/team-members/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
   const body = await c.req.json();
   const parsed = UpdateTeamMemberSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const existing = await db
-    .select()
+    .select({ id: teamMembers.id })
     .from(teamMembers)
     .where(
-      and(eq(teamMembers.id, id), eq(teamMembers.userId, USER_ID), isNull(teamMembers.deletedAt)),
+      and(eq(teamMembers.id, id), eq(teamMembers.userId, userId), isNull(teamMembers.deletedAt)),
     )
     .get();
 
   if (!existing) {
-    return c.json({ error: "Team member not found" }, 404);
+    return notFound(c, "Team member");
   }
 
   const data = parsed.data;
@@ -140,10 +134,13 @@ standupsRouter.patch("/team-members/:id", async (c) => {
   if (data.role !== undefined) fieldsToUpdate.role = data.role ?? null;
   if (data.active !== undefined) fieldsToUpdate.active = data.active;
 
+  // Guards kept in the write itself (B5).
   const updated = await db
     .update(teamMembers)
     .set(fieldsToUpdate)
-    .where(eq(teamMembers.id, id))
+    .where(
+      and(eq(teamMembers.id, id), eq(teamMembers.userId, userId), isNull(teamMembers.deletedAt)),
+    )
     .returning()
     .get();
 
@@ -153,25 +150,28 @@ standupsRouter.patch("/team-members/:id", async (c) => {
 // ─── Delete Team Member (soft) ───────────────────────────────
 standupsRouter.delete("/team-members/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const existing = await db
-    .select()
+    .select({ id: teamMembers.id })
     .from(teamMembers)
     .where(
-      and(eq(teamMembers.id, id), eq(teamMembers.userId, USER_ID), isNull(teamMembers.deletedAt)),
+      and(eq(teamMembers.id, id), eq(teamMembers.userId, userId), isNull(teamMembers.deletedAt)),
     )
     .get();
 
   if (!existing) {
-    return c.json({ error: "Team member not found" }, 404);
+    return notFound(c, "Team member");
   }
 
   const now = Math.floor(Date.now() / 1000);
 
   await db.update(teamMembers)
     .set({ deletedAt: now, updatedAt: now })
-    .where(eq(teamMembers.id, id))
+    .where(
+      and(eq(teamMembers.id, id), eq(teamMembers.userId, userId), isNull(teamMembers.deletedAt)),
+    )
     .run();
 
   return c.json({ success: true });
@@ -184,6 +184,7 @@ standupsRouter.delete("/team-members/:id", async (c) => {
 // ─── List Standups ───────────────────────────────────────────
 standupsRouter.get("/standups", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const rawQuery: Record<string, string> = {};
   for (const [k, v] of Object.entries(c.req.query())) {
     if (v !== undefined) rawQuery[k] = v;
@@ -191,14 +192,11 @@ standupsRouter.get("/standups", async (c) => {
   const parsed = StandupFilterSchema.safeParse(rawQuery);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Invalid query parameters", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Invalid query parameters", parsed.error.flatten());
   }
 
   const { teamMemberId, projectId, date, dateFrom, dateTo, status } = parsed.data;
-  const conditions = [eq(standups.userId, USER_ID), isNull(standups.deletedAt)];
+  const conditions = [eq(standups.userId, userId), isNull(standups.deletedAt)];
 
   if (teamMemberId) conditions.push(eq(standups.teamMemberId, teamMemberId));
   if (projectId) conditions.push(eq(standups.projectId, projectId));
@@ -223,16 +221,17 @@ standupsRouter.get("/standups", async (c) => {
 // ─── Get Standup by ID ───────────────────────────────────────
 standupsRouter.get("/standups/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const row = await db
     .select()
     .from(standups)
-    .where(and(eq(standups.id, id), eq(standups.userId, USER_ID), isNull(standups.deletedAt)))
+    .where(and(eq(standups.id, id), eq(standups.userId, userId), isNull(standups.deletedAt)))
     .get();
 
   if (!row) {
-    return c.json({ error: "Standup not found" }, 404);
+    return notFound(c, "Standup");
   }
 
   return c.json(row);
@@ -241,14 +240,12 @@ standupsRouter.get("/standups/:id", async (c) => {
 // ─── Create Standup ──────────────────────────────────────────
 standupsRouter.post("/standups", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const body = await c.req.json();
   const parsed = CreateStandupSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const data = parsed.data;
@@ -259,7 +256,7 @@ standupsRouter.post("/standups", async (c) => {
     .insert(standups)
     .values({
       id,
-      userId: USER_ID,
+      userId,
       teamMemberId: data.teamMemberId,
       projectId: data.projectId ?? null,
       date: data.date,
@@ -280,25 +277,23 @@ standupsRouter.post("/standups", async (c) => {
 // ─── Update Standup ──────────────────────────────────────────
 standupsRouter.patch("/standups/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
   const body = await c.req.json();
   const parsed = UpdateStandupSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const existing = await db
-    .select()
+    .select({ id: standups.id })
     .from(standups)
-    .where(and(eq(standups.id, id), eq(standups.userId, USER_ID), isNull(standups.deletedAt)))
+    .where(and(eq(standups.id, id), eq(standups.userId, userId), isNull(standups.deletedAt)))
     .get();
 
   if (!existing) {
-    return c.json({ error: "Standup not found" }, 404);
+    return notFound(c, "Standup");
   }
 
   const data = parsed.data;
@@ -315,10 +310,11 @@ standupsRouter.patch("/standups/:id", async (c) => {
   if (data.blocker !== undefined) fieldsToUpdate.blocker = data.blocker ?? null;
   if (data.status !== undefined) fieldsToUpdate.status = data.status;
 
+  // Guards kept in the write itself (B5).
   const updated = await db
     .update(standups)
     .set(fieldsToUpdate)
-    .where(eq(standups.id, id))
+    .where(and(eq(standups.id, id), eq(standups.userId, userId), isNull(standups.deletedAt)))
     .returning()
     .get();
 
@@ -328,23 +324,24 @@ standupsRouter.patch("/standups/:id", async (c) => {
 // ─── Delete Standup (soft) ───────────────────────────────────
 standupsRouter.delete("/standups/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const existing = await db
-    .select()
+    .select({ id: standups.id })
     .from(standups)
-    .where(and(eq(standups.id, id), eq(standups.userId, USER_ID), isNull(standups.deletedAt)))
+    .where(and(eq(standups.id, id), eq(standups.userId, userId), isNull(standups.deletedAt)))
     .get();
 
   if (!existing) {
-    return c.json({ error: "Standup not found" }, 404);
+    return notFound(c, "Standup");
   }
 
   const now = Math.floor(Date.now() / 1000);
 
   await db.update(standups)
     .set({ deletedAt: now, updatedAt: now })
-    .where(eq(standups.id, id))
+    .where(and(eq(standups.id, id), eq(standups.userId, userId), isNull(standups.deletedAt)))
     .run();
 
   return c.json({ success: true });

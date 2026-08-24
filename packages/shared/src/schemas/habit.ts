@@ -25,7 +25,29 @@ export const HabitSchema = z.object({
 export type Habit = z.infer<typeof HabitSchema>;
 
 // ─── Create Habit (POST body) ───────────────────────────────────────────────
-export const CreateHabitSchema = HabitSchema.omit({
+/**
+ * True when `raw` is a JSON-encoded array of weekday integers 0-6 with at
+ * least one entry. Guards against zombie habits: a custom_days habit with
+ * garbage JSON is never scheduled (recurrence swallows the parse error).
+ */
+export function isValidCustomDaysJson(raw: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(parsed) || parsed.length < 1) return false;
+  return parsed.every(
+    (n) => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 6,
+  );
+}
+
+const CUSTOM_DAYS_MESSAGE =
+  "customDays must be a JSON array of weekday integers 0-6 with at least one entry when frequency is custom_days";
+
+// Base without refinement so the partial update schema can reuse the shape.
+const CreateHabitBase = HabitSchema.omit({
   id: true,
   createdAt: true,
   updatedAt: true,
@@ -33,10 +55,41 @@ export const CreateHabitSchema = HabitSchema.omit({
   deletedAt: true,
 }).strict();
 
+export const CreateHabitSchema = CreateHabitBase.superRefine((data, ctx) => {
+  if (
+    data.frequency === "custom_days" &&
+    (data.customDays == null || !isValidCustomDaysJson(data.customDays))
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["customDays"],
+      message: CUSTOM_DAYS_MESSAGE,
+    });
+  }
+});
+
 export type CreateHabit = z.infer<typeof CreateHabitSchema>;
 
 // ─── Update Habit (PATCH body) ──────────────────────────────────────────────
-export const UpdateHabitSchema = CreateHabitSchema.partial().strict();
+// Lenient by design (a PATCH may carry only one field), but when BOTH
+// frequency=custom_days and a non-null customDays are provided, the same
+// rule applies.
+export const UpdateHabitSchema = CreateHabitBase.partial()
+  .strict()
+  .superRefine((data, ctx) => {
+    if (
+      data.frequency === "custom_days" &&
+      data.customDays !== undefined &&
+      data.customDays !== null &&
+      !isValidCustomDaysJson(data.customDays)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["customDays"],
+        message: CUSTOM_DAYS_MESSAGE,
+      });
+    }
+  });
 
 export type UpdateHabit = z.infer<typeof UpdateHabitSchema>;
 
@@ -60,7 +113,9 @@ export type HabitLog = z.infer<typeof HabitLogSchema>;
 export const LogHabitSchema = z
   .object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // YYYY-MM-DD
-    increment: z.number().int().positive().default(1),
+    // Non-zero int: +n to check in, -n to undo (BL6 — check-ins were
+    // previously irreversible and aria-labels promised an undo that no-op'd).
+    increment: z.number().int().refine((v) => v !== 0, "increment must be non-zero").default(1),
     note: z.string().max(500).optional(),
   })
   .strict();

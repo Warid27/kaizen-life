@@ -1,72 +1,22 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api-client';
+import type {
+  Semester,
+  SemesterEvent,
+  Course,
+  CourseSchedule,
+  Assignment,
+} from '@kaizenlife/shared';
 
-// ─── Types (not in @kaizenlife/shared — defined inline from DB schema) ────────
+// ─── Types — derived from @kaizenlife/shared (A4: single source of truth) ────
 
-export interface Semester {
-  id: string;
-  userId: string;
-  name: string;
-  startDate: string;
-  endDate: string;
-  createdAt: number;
-  updatedAt: number;
-  deletedAt: number | null;
-}
-
-export interface Course {
-  id: string;
-  userId: string;
-  semesterId: string;
-  name: string;
-  code: string | null;
-  lecturer: string | null;
-  room: string | null;
-  color: string | null;
-  createdAt: number;
-  updatedAt: number;
-  deletedAt: number | null;
-}
-
-export interface CourseSchedule {
-  id: string;
-  userId: string;
-  courseId: string;
-  dayOfWeek: number; // 0-6
-  startTime: string; // HH:MM
-  endTime: string;   // HH:MM
-  room: string | null;
-  createdAt: number;
-  updatedAt: number;
-  deletedAt: number | null;
-}
-
-export interface Assignment {
-  id: string;
-  userId: string;
-  courseId: string;
-  title: string;
-  description: string | null;
-  dueDate: string; // YYYY-MM-DD
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  status: 'not_started' | 'in_progress' | 'submitted' | 'graded';
-  grade: string | null;
-  createdAt: number;
-  updatedAt: number;
-  deletedAt: number | null;
-}
-
-export interface SemesterEvent {
-  id: string;
-  userId: string;
-  semesterId: string;
-  title: string;
-  date: string;
-  type: 'midterm' | 'final' | 'deadline' | 'other';
-  createdAt: number;
-  updatedAt: number;
-  deletedAt: number | null;
-}
+export type {
+  Semester,
+  SemesterEvent,
+  Course,
+  CourseSchedule,
+  Assignment,
+};
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
 

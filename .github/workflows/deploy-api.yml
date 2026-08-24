@@ -10,7 +10,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  quality:
+    name: Quality gates (typecheck + tests)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -24,8 +25,48 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      # Non-blocking until pre-existing strict-mode errors in apps/api (~90) are fixed.
+      - name: Typecheck API
+        run: bunx --package=typescript@~5.9.0 tsc --noEmit -p apps/api/tsconfig.json
+
+      # Non-blocking until pre-existing strict-mode errors in packages/shared tests (5) are fixed.
+      - name: Typecheck shared
+        run: bunx --package=typescript@~5.9.0 tsc --noEmit -p packages/shared/tsconfig.json
+
+      - name: Tests
+        run: bun run test
+
+  deploy:
+    name: Deploy
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      # wrangler.toml declares no migrations_dir; wrangler defaults to ./migrations,
+      # so copy the drizzle-kit output there for the duration of the job.
+      # First run may fail if the remote schema was applied manually without
+      # wrangler tracking (d1_migrations table) - see D14 remediation notes.
+      - name: Apply D1 migrations to remote database
+        run: |
+          cp -r drizzle migrations
+          bunx wrangler@^3.99.0 d1 migrations apply kaizenlife-db --remote
+        working-directory: apps/api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Deploy to Cloudflare Workers
-        run: bunx wrangler deploy
+        run: bun run deploy
         working-directory: apps/api
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

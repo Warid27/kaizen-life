@@ -38,7 +38,15 @@ export const CreateTaskSchema = TaskSchema.omit({
 
 export type CreateTask = z.infer<typeof CreateTaskSchema>;
 
-export const UpdateTaskSchema = CreateTaskSchema.partial().strict();
+export const UpdateTaskSchema = CreateTaskSchema.partial()
+  .extend({
+    // Same validation as QuickCaptureSchema — arbitrary strings like
+    // "next Tuesday" or "25:99" must not poison calendar queries.
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    startTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+    endTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  })
+  .strict();
 
 export type UpdateTask = z.infer<typeof UpdateTaskSchema>;
 

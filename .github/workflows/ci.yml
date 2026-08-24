@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    name: Quality gates (typecheck + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      # Blocking quality gates — repo typechecks clean under strict mode.
+      - name: Typecheck API
+        run: bunx --package=typescript@~5.9.0 tsc --noEmit -p apps/api/tsconfig.json
+
+      - name: Typecheck shared
+        run: bunx --package=typescript@~5.9.0 tsc --noEmit -p packages/shared/tsconfig.json
+
+      - name: Tests
+        run: bun run test

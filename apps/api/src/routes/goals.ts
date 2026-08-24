@@ -8,31 +8,23 @@ import {
   UpdateGoalSchema,
   GoalQuerySchema,
 } from "@kaizenlife/shared";
+import { apiError, notFound, validationHook } from "../lib/api";
 
-const goalsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
-
-// Hardcoded user for now (no auth middleware yet)
-const USER_ID = "default-user";
+const goalsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
 // ---------------------------------------------------------------------------
 // GET /goals — list goals with optional filters
 // ---------------------------------------------------------------------------
 goalsRouter.get(
   "/goals",
-  zValidator("query", GoalQuerySchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Invalid query parameters", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("query", GoalQuerySchema, validationHook),
   async (c) => {
     const db = c.get("db");
+    const userId = c.get("userId");
     const { type, status, parentGoalId } = c.req.valid("query");
 
     const conditions = [
-      eq(goals.userId, USER_ID),
+      eq(goals.userId, userId),
       isNull(goals.deletedAt),
     ];
     if (type) conditions.push(eq(goals.type, type));
@@ -55,7 +47,8 @@ goalsRouter.get(
 // ---------------------------------------------------------------------------
 goalsRouter.get("/goals/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const row = await db
     .select()
@@ -63,14 +56,14 @@ goalsRouter.get("/goals/:id", async (c) => {
     .where(
       and(
         eq(goals.id, id),
-        eq(goals.userId, USER_ID),
+        eq(goals.userId, userId),
         isNull(goals.deletedAt),
       ),
     )
     .get();
 
   if (!row) {
-    return c.json({ error: "Goal not found" }, 404);
+    return notFound(c, "Goal");
   }
 
   // Fetch child goals
@@ -80,7 +73,7 @@ goalsRouter.get("/goals/:id", async (c) => {
     .where(
       and(
         eq(goals.parentGoalId, id),
-        eq(goals.userId, USER_ID),
+        eq(goals.userId, userId),
         isNull(goals.deletedAt),
       ),
     )
@@ -95,16 +88,10 @@ goalsRouter.get("/goals/:id", async (c) => {
 // ---------------------------------------------------------------------------
 goalsRouter.post(
   "/goals",
-  zValidator("json", CreateGoalSchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Validation failed", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("json", CreateGoalSchema, validationHook),
   async (c) => {
     const db = c.get("db");
+    const userId = c.get("userId");
     const body = c.req.valid("json");
     const now = Math.floor(Date.now() / 1000);
     const id = crypto.randomUUID();
@@ -112,19 +99,19 @@ goalsRouter.post(
     // Validate parentGoalId exists if provided
     if (body.parentGoalId) {
       const parent = await db
-        .select()
+        .select({ id: goals.id })
         .from(goals)
         .where(
           and(
             eq(goals.id, body.parentGoalId),
-            eq(goals.userId, USER_ID),
+            eq(goals.userId, userId),
             isNull(goals.deletedAt),
           ),
         )
         .get();
 
       if (!parent) {
-        return c.json({ error: "Parent goal not found" }, 404);
+        return notFound(c, "Parent goal");
       }
     }
 
@@ -132,7 +119,7 @@ goalsRouter.post(
       .insert(goals)
       .values({
         id,
-        userId: USER_ID,
+        userId,
         ...body,
         status: body.status ?? "not_started",
         currentValue: body.currentValue ?? 0,
@@ -148,63 +135,61 @@ goalsRouter.post(
 
 // ---------------------------------------------------------------------------
 // PATCH /goals/:id — update a goal
+// NOTE (BL17): status is never mutated implicitly here — a client-sent status
+// is applied as-is, but progress/currentValue updates do NOT resurrect an
+// abandoned goal to in_progress server-side.
 // ---------------------------------------------------------------------------
 goalsRouter.patch(
   "/goals/:id",
-  zValidator("json", UpdateGoalSchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Validation failed", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("json", UpdateGoalSchema, validationHook),
   async (c) => {
     const db = c.get("db");
-    const id = c.req.param("id");
+    const userId = c.get("userId");
+    const id = String(c.req.param("id"));
     const body = c.req.valid("json");
     const now = Math.floor(Date.now() / 1000);
 
     // Verify ownership
     const existing = await db
-      .select()
+      .select({ id: goals.id })
       .from(goals)
       .where(
         and(
           eq(goals.id, id),
-          eq(goals.userId, USER_ID),
+          eq(goals.userId, userId),
           isNull(goals.deletedAt),
         ),
       )
       .get();
 
     if (!existing) {
-      return c.json({ error: "Goal not found" }, 404);
+      return notFound(c, "Goal");
     }
 
     // Validate parentGoalId exists if being changed and is not self
     if (body.parentGoalId && body.parentGoalId !== id) {
       const parent = await db
-        .select()
+        .select({ id: goals.id })
         .from(goals)
         .where(
           and(
             eq(goals.id, body.parentGoalId),
-            eq(goals.userId, USER_ID),
+            eq(goals.userId, userId),
             isNull(goals.deletedAt),
           ),
         )
         .get();
 
       if (!parent) {
-        return c.json({ error: "Parent goal not found" }, 404);
+        return notFound(c, "Parent goal");
       }
     }
 
+    // Guards kept in the write itself (B5).
     const updated = await db
       .update(goals)
       .set({ ...body, updatedAt: now })
-      .where(and(eq(goals.id, id), eq(goals.userId, USER_ID)))
+      .where(and(eq(goals.id, id), eq(goals.userId, userId), isNull(goals.deletedAt)))
       .returning()
       .get();
 
@@ -217,34 +202,35 @@ goalsRouter.patch(
 // ---------------------------------------------------------------------------
 goalsRouter.delete("/goals/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
   const now = Math.floor(Date.now() / 1000);
 
   const existing = await db
-    .select()
+    .select({ id: goals.id })
     .from(goals)
     .where(
       and(
         eq(goals.id, id),
-        eq(goals.userId, USER_ID),
+        eq(goals.userId, userId),
         isNull(goals.deletedAt),
       ),
     )
     .get();
 
   if (!existing) {
-    return c.json({ error: "Goal not found" }, 404);
+    return notFound(c, "Goal");
   }
 
-  // Unlink children (set parentGoalId to null)
+  // Unlink live children (set parentGoalId to null) — guarded by user + soft-delete state
   await db.update(goals)
     .set({ parentGoalId: null, updatedAt: now })
-    .where(and(eq(goals.parentGoalId, id), eq(goals.userId, USER_ID)))
+    .where(and(eq(goals.parentGoalId, id), eq(goals.userId, userId), isNull(goals.deletedAt)))
     .run();
 
   await db.update(goals)
     .set({ deletedAt: now, updatedAt: now })
-    .where(and(eq(goals.id, id), eq(goals.userId, USER_ID)))
+    .where(and(eq(goals.id, id), eq(goals.userId, userId), isNull(goals.deletedAt)))
     .run();
 
   return c.json({ success: true });

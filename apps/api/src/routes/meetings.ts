@@ -10,10 +10,9 @@ import {
   ActionItemFilterSchema,
 } from "@kaizenlife/shared";
 import { eq, and, isNull, gte, lte, desc } from "drizzle-orm";
+import { apiError, notFound } from "../lib/api";
 
-const meetingsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
-
-const USER_ID = "default-user";
+const meetingsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
 // ══════════════════════════════════════════════════════════════
 // MEETINGS
@@ -22,6 +21,7 @@ const USER_ID = "default-user";
 // ─── List Meetings ───────────────────────────────────────────
 meetingsRouter.get("/meetings", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const rawQuery: Record<string, string> = {};
   for (const [k, v] of Object.entries(c.req.query())) {
     if (v !== undefined) rawQuery[k] = v;
@@ -29,14 +29,11 @@ meetingsRouter.get("/meetings", async (c) => {
   const parsed = MeetingFilterSchema.safeParse(rawQuery);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Invalid query parameters", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Invalid query parameters", parsed.error.flatten());
   }
 
   const { projectId, date, dateFrom, dateTo } = parsed.data;
-  const conditions = [eq(meetings.userId, USER_ID), isNull(meetings.deletedAt)];
+  const conditions = [eq(meetings.userId, userId), isNull(meetings.deletedAt)];
 
   if (projectId) conditions.push(eq(meetings.projectId, projectId));
   if (date) {
@@ -59,16 +56,17 @@ meetingsRouter.get("/meetings", async (c) => {
 // ─── Get Meeting by ID ───────────────────────────────────────
 meetingsRouter.get("/meetings/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const row = await db
     .select()
     .from(meetings)
-    .where(and(eq(meetings.id, id), eq(meetings.userId, USER_ID), isNull(meetings.deletedAt)))
+    .where(and(eq(meetings.id, id), eq(meetings.userId, userId), isNull(meetings.deletedAt)))
     .get();
 
   if (!row) {
-    return c.json({ error: "Meeting not found" }, 404);
+    return notFound(c, "Meeting");
   }
 
   return c.json(row);
@@ -77,14 +75,12 @@ meetingsRouter.get("/meetings/:id", async (c) => {
 // ─── Create Meeting ──────────────────────────────────────────
 meetingsRouter.post("/meetings", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const body = await c.req.json();
   const parsed = CreateMeetingSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const data = parsed.data;
@@ -95,7 +91,7 @@ meetingsRouter.post("/meetings", async (c) => {
     .insert(meetings)
     .values({
       id,
-      userId: USER_ID,
+      userId,
       projectId: data.projectId ?? null,
       date: data.date,
       agenda: data.agenda ?? null,
@@ -112,25 +108,23 @@ meetingsRouter.post("/meetings", async (c) => {
 // ─── Update Meeting ──────────────────────────────────────────
 meetingsRouter.patch("/meetings/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
   const body = await c.req.json();
   const parsed = UpdateMeetingSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const existing = await db
-    .select()
+    .select({ id: meetings.id })
     .from(meetings)
-    .where(and(eq(meetings.id, id), eq(meetings.userId, USER_ID), isNull(meetings.deletedAt)))
+    .where(and(eq(meetings.id, id), eq(meetings.userId, userId), isNull(meetings.deletedAt)))
     .get();
 
   if (!existing) {
-    return c.json({ error: "Meeting not found" }, 404);
+    return notFound(c, "Meeting");
   }
 
   const data = parsed.data;
@@ -143,10 +137,11 @@ meetingsRouter.patch("/meetings/:id", async (c) => {
   if (data.agenda !== undefined) fieldsToUpdate.agenda = data.agenda ?? null;
   if (data.decisions !== undefined) fieldsToUpdate.decisions = data.decisions ?? null;
 
+  // Guards kept in the write itself (B5).
   const updated = await db
     .update(meetings)
     .set(fieldsToUpdate)
-    .where(eq(meetings.id, id))
+    .where(and(eq(meetings.id, id), eq(meetings.userId, userId), isNull(meetings.deletedAt)))
     .returning()
     .get();
 
@@ -156,23 +151,24 @@ meetingsRouter.patch("/meetings/:id", async (c) => {
 // ─── Delete Meeting (soft) ───────────────────────────────────
 meetingsRouter.delete("/meetings/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const existing = await db
-    .select()
+    .select({ id: meetings.id })
     .from(meetings)
-    .where(and(eq(meetings.id, id), eq(meetings.userId, USER_ID), isNull(meetings.deletedAt)))
+    .where(and(eq(meetings.id, id), eq(meetings.userId, userId), isNull(meetings.deletedAt)))
     .get();
 
   if (!existing) {
-    return c.json({ error: "Meeting not found" }, 404);
+    return notFound(c, "Meeting");
   }
 
   const now = Math.floor(Date.now() / 1000);
 
   await db.update(meetings)
     .set({ deletedAt: now, updatedAt: now })
-    .where(eq(meetings.id, id))
+    .where(and(eq(meetings.id, id), eq(meetings.userId, userId), isNull(meetings.deletedAt)))
     .run();
 
   return c.json({ success: true });
@@ -185,6 +181,7 @@ meetingsRouter.delete("/meetings/:id", async (c) => {
 // ─── List Action Items ───────────────────────────────────────
 meetingsRouter.get("/action-items", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const rawQuery: Record<string, string> = {};
   for (const [k, v] of Object.entries(c.req.query())) {
     if (v !== undefined) rawQuery[k] = v;
@@ -192,15 +189,12 @@ meetingsRouter.get("/action-items", async (c) => {
   const parsed = ActionItemFilterSchema.safeParse(rawQuery);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Invalid query parameters", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Invalid query parameters", parsed.error.flatten());
   }
 
   const { meetingId, status } = parsed.data;
   const conditions = [
-    eq(meetingActionItems.userId, USER_ID),
+    eq(meetingActionItems.userId, userId),
     isNull(meetingActionItems.deletedAt),
   ];
 
@@ -220,7 +214,8 @@ meetingsRouter.get("/action-items", async (c) => {
 // ─── Get Action Item by ID ───────────────────────────────────
 meetingsRouter.get("/action-items/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const row = await db
     .select()
@@ -228,14 +223,14 @@ meetingsRouter.get("/action-items/:id", async (c) => {
     .where(
       and(
         eq(meetingActionItems.id, id),
-        eq(meetingActionItems.userId, USER_ID),
+        eq(meetingActionItems.userId, userId),
         isNull(meetingActionItems.deletedAt),
       ),
     )
     .get();
 
   if (!row) {
-    return c.json({ error: "Action item not found" }, 404);
+    return notFound(c, "Action item");
   }
 
   return c.json(row);
@@ -244,14 +239,12 @@ meetingsRouter.get("/action-items/:id", async (c) => {
 // ─── Create Action Item ──────────────────────────────────────
 meetingsRouter.post("/action-items", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const body = await c.req.json();
   const parsed = CreateActionItemSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const data = parsed.data;
@@ -262,7 +255,7 @@ meetingsRouter.post("/action-items", async (c) => {
     .insert(meetingActionItems)
     .values({
       id,
-      userId: USER_ID,
+      userId,
       meetingId: data.meetingId,
       description: data.description,
       pic: data.pic ?? null,
@@ -280,31 +273,29 @@ meetingsRouter.post("/action-items", async (c) => {
 // ─── Update Action Item ──────────────────────────────────────
 meetingsRouter.patch("/action-items/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
   const body = await c.req.json();
   const parsed = UpdateActionItemSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const existing = await db
-    .select()
+    .select({ id: meetingActionItems.id })
     .from(meetingActionItems)
     .where(
       and(
         eq(meetingActionItems.id, id),
-        eq(meetingActionItems.userId, USER_ID),
+        eq(meetingActionItems.userId, userId),
         isNull(meetingActionItems.deletedAt),
       ),
     )
     .get();
 
   if (!existing) {
-    return c.json({ error: "Action item not found" }, 404);
+    return notFound(c, "Action item");
   }
 
   const data = parsed.data;
@@ -318,10 +309,17 @@ meetingsRouter.patch("/action-items/:id", async (c) => {
   if (data.deadline !== undefined) fieldsToUpdate.deadline = data.deadline ?? null;
   if (data.status !== undefined) fieldsToUpdate.status = data.status;
 
+  // Guards kept in the write itself (B5).
   const updated = await db
     .update(meetingActionItems)
     .set(fieldsToUpdate)
-    .where(eq(meetingActionItems.id, id))
+    .where(
+      and(
+        eq(meetingActionItems.id, id),
+        eq(meetingActionItems.userId, userId),
+        isNull(meetingActionItems.deletedAt),
+      ),
+    )
     .returning()
     .get();
 
@@ -331,29 +329,36 @@ meetingsRouter.patch("/action-items/:id", async (c) => {
 // ─── Delete Action Item (soft) ───────────────────────────────
 meetingsRouter.delete("/action-items/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const existing = await db
-    .select()
+    .select({ id: meetingActionItems.id })
     .from(meetingActionItems)
     .where(
       and(
         eq(meetingActionItems.id, id),
-        eq(meetingActionItems.userId, USER_ID),
+        eq(meetingActionItems.userId, userId),
         isNull(meetingActionItems.deletedAt),
       ),
     )
     .get();
 
   if (!existing) {
-    return c.json({ error: "Action item not found" }, 404);
+    return notFound(c, "Action item");
   }
 
   const now = Math.floor(Date.now() / 1000);
 
   await db.update(meetingActionItems)
     .set({ deletedAt: now, updatedAt: now })
-    .where(eq(meetingActionItems.id, id))
+    .where(
+      and(
+        eq(meetingActionItems.id, id),
+        eq(meetingActionItems.userId, userId),
+        isNull(meetingActionItems.deletedAt),
+      ),
+    )
     .run();
 
   return c.json({ success: true });

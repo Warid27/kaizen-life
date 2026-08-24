@@ -4,7 +4,6 @@ import {
   useTransactions,
   useMonthlySummary,
   useCreateTransaction,
-  type TransactionType,
   type TransactionFilter,
   type Transaction,
 } from '@/queries/finance';
@@ -19,11 +18,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import {
   TrendingUp,
   TrendingDown,
-  Plus,
   ArrowUpRight,
   ArrowDownRight,
   DollarSign,
   Calendar,
+  AlertCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -57,6 +56,9 @@ ChartJS.register(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+type TransactionType = Transaction['type'];
+type AccountKind = Transaction['account'];
+
 function currentMonth(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -89,86 +91,6 @@ const INCOME_CATEGORIES = [
   'Other',
 ];
 
-// ─── Demo data (used when API is unavailable) ─────────────────────────────────
-
-function generateDemoTransactions(): Transaction[] {
-  const now = new Date();
-  const txs: Transaction[] = [];
-  for (let i = 0; i < 30; i++) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-    // 2-3 expenses per day
-    const expCount = 1 + (i % 3);
-    for (let j = 0; j < expCount; j++) {
-      txs.push({
-        id: `exp-${i}-${j}`,
-        type: 'expense',
-        amountCents: [850, 1200, 2500, 4500, 680, 1500, 3200][(i + j) % 7] * 100,
-        currency: DEFAULT_CURRENCY,
-        category: EXPENSE_CATEGORIES[(i + j) % EXPENSE_CATEGORIES.length],
-        description: ['Lunch', 'Groceries', 'Uber', 'Electric bill', 'Netflix', 'Coffee', 'Gym'][(i + j) % 7],
-        date,
-        createdAt: date,
-      });
-    }
-
-    // Income on 1st and 15th
-    if (d.getDate() === 1 || d.getDate() === 15) {
-      txs.push({
-        id: `inc-${i}`,
-        type: 'income',
-        amountCents: 3500000,
-        currency: DEFAULT_CURRENCY,
-        category: 'Salary',
-        description: 'Monthly salary',
-        date,
-        createdAt: date,
-      });
-    }
-  }
-  return txs;
-}
-
-function generateDemoSummary(month: string) {
-  const daysInMonth = new Date(
-    parseInt(month.split('-')[0]),
-    parseInt(month.split('-')[1]),
-    0,
-  ).getDate();
-
-  const byCategory = EXPENSE_CATEGORIES.slice(0, 6).map((cat, i) => ({
-    category: cat,
-    amountCents: [45000, 28000, 120000, 15000, 12000, 22000][i],
-    type: 'expense' as const,
-  }));
-
-  byCategory.push({
-    category: 'Salary',
-    amountCents: 7000000,
-    type: 'income' as const,
-  });
-
-  const dailyBalance: { date: string; balanceCents: number }[] = [];
-  let running = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dateStr = `${month}-${String(d).padStart(2, '0')}`;
-    if (d === 1 || d === 15) running += 3500000;
-    running -= [4500, 2800, 12000, 1500, 1200, 2200][(d - 1) % 6] * 100;
-    dailyBalance.push({ date: dateStr, balanceCents: running });
-  }
-
-  return {
-    month,
-    incomeCents: 7000000,
-    expenseCents: 2420000,
-    netCents: 4580000,
-    byCategory,
-    dailyBalance,
-  };
-}
-
 // ─── Default export ───────────────────────────────────────────────────────────
 
 export default function FinanceApp() {
@@ -183,31 +105,53 @@ export default function FinanceApp() {
 
 function FinanceContent() {
   const [filterType, setFilterType] = useState<TransactionType | ''>('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [formType, setFormType] = useState<TransactionType>('expense');
+  const [formError, setFormError] = useState<string | null>(null);
   const month = currentMonth();
 
-  const filters: TransactionFilter = {};
-  if (filterType) filters.type = filterType;
-  if (startDate) filters.startDate = startDate;
-  if (endDate) filters.endDate = endDate;
+  // BL13/F4: filters now map to the API's real `from`/`to` params.
+  const filters: TransactionFilter = useMemo(() => {
+    const f: TransactionFilter = {};
+    if (filterType) f.type = filterType;
+    if (from) f.from = from;
+    if (to) f.to = to;
+    return f;
+  }, [filterType, from, to]);
 
-  const { data: transactions, isLoading: txLoading } = useTransactions(filters);
-  const { data: summary, isLoading: summaryLoading } = useMonthlySummary(month);
+  const {
+    data: transactions,
+    isPending: txPending,
+    error: txError,
+    refetch: txRefetch,
+  } = useTransactions(filters);
+  const {
+    data: summary,
+    isPending: summaryPending,
+    error: summaryError,
+    refetch: summaryRefetch,
+  } = useMonthlySummary(month);
   const createMut = useCreateTransaction();
 
-  // Use demo data when API unavailable
-  const txList = transactions ?? generateDemoTransactions();
-  const summaryData = summary ?? generateDemoSummary(month);
-
-  const totalIncome = summaryData.incomeCents;
-  const totalExpense = summaryData.expenseCents;
-  const net = summaryData.netCents;
+  // Currency shown in charts: first key present in dailyBalance, else 'idr'.
+  const [selectedCcy, setSelectedCcy] = useState<string>('');
+  const dailyByCcy = useMemo(
+    () => summary?.dailyBalance ?? {},
+    [summary],
+  );
+  const availableCcys = useMemo(
+    () => Object.keys(dailyByCcy),
+    [dailyByCcy],
+  );
+  const effectiveCcy = availableCcys.includes(selectedCcy)
+    ? selectedCcy
+    : (availableCcys[0] ?? DEFAULT_CURRENCY);
 
   const openAddForm = (type: TransactionType) => {
     setFormType(type);
+    setFormError(null);
     setFormOpen(true);
   };
 
@@ -215,12 +159,31 @@ function FinanceContent() {
     amountCents: number;
     currency: Currency;
     category: string;
-    description: string;
+    account: AccountKind;
+    note: string;
     date: string;
   }) => {
+    setFormError(null);
     createMut.mutate(
-      { ...data, type: formType },
-      { onSuccess: () => setFormOpen(false) },
+      {
+        date: data.date,
+        type: formType,
+        amountCents: data.amountCents,
+        currency: data.currency,
+        category: data.category,
+        account: data.account,
+        note: data.note,
+      },
+      {
+        onSuccess: () => setFormOpen(false),
+        onError: (err) => {
+          setFormError(
+            err instanceof Error && err.message
+              ? err.message
+              : 'Failed to save transaction. Please try again.',
+          );
+        },
+      },
     );
   };
 
@@ -247,26 +210,44 @@ function FinanceContent() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <SummaryCard
-          label="Income"
-          value={formatCents(totalIncome)}
-          icon={<TrendingUp className="h-4 w-4 text-emerald-600" />}
-          trend="up"
-        />
-        <SummaryCard
-          label="Expenses"
-          value={formatCents(totalExpense)}
-          icon={<TrendingDown className="h-4 w-4 text-destructive" />}
-          trend="down"
-        />
-        <SummaryCard
-          label="Net"
-          value={formatCents(net)}
-          icon={<DollarSign className="h-4 w-4 text-primary" />}
-          trend={net >= 0 ? 'up' : 'down'}
-        />
-      </div>
+      {summaryPending ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Card key={i}>
+              <CardContent className="flex items-center gap-4 p-4">
+                <Skeleton className="h-10 w-10 rounded-lg" />
+                <div className="space-y-2">
+                  <Skeleton className="h-3 w-16" />
+                  <Skeleton className="h-5 w-24" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : summaryError ? (
+        <ErrorCard message={summaryError.message} onRetry={() => summaryRefetch()} />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <SummaryCard
+            label="Income"
+            value={formatCents(summary?.incomeCents ?? 0, summary?.primaryCurrency)}
+            icon={<TrendingUp className="h-4 w-4 text-emerald-600" />}
+            trend="up"
+          />
+          <SummaryCard
+            label="Expenses"
+            value={formatCents(summary?.expenseCents ?? 0, summary?.primaryCurrency)}
+            icon={<TrendingDown className="h-4 w-4 text-destructive" />}
+            trend="down"
+          />
+          <SummaryCard
+            label="Net"
+            value={formatCents(summary?.netCents ?? 0, summary?.primaryCurrency)}
+            icon={<DollarSign className="h-4 w-4 text-primary" />}
+            trend={(summary?.netCents ?? 0) >= 0 ? 'up' : 'down'}
+          />
+        </div>
+      )}
 
       {/* Filters */}
       <Card>
@@ -288,8 +269,8 @@ function FinanceContent() {
               <Label className="text-xs">From</Label>
               <Input
                 type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
                 className="w-40"
               />
             </div>
@@ -297,19 +278,19 @@ function FinanceContent() {
               <Label className="text-xs">To</Label>
               <Input
                 type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
                 className="w-40"
               />
             </div>
-            {(filterType || startDate || endDate) && (
+            {(filterType || from || to) && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => {
                   setFilterType('');
-                  setStartDate('');
-                  setEndDate('');
+                  setFrom('');
+                  setTo('');
                 }}
               >
                 Clear
@@ -320,10 +301,47 @@ function FinanceContent() {
       </Card>
 
       {/* Charts */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <CategoryBarChart data={summaryData.byCategory} />
-        <BalanceLineChart data={summaryData.dailyBalance} />
-      </div>
+      {summaryPending ? (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <Card key={i}>
+              <CardContent className="p-4">
+                <Skeleton className="mb-3 h-5 w-32" />
+                <Skeleton className="h-[220px] w-full" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : summaryError ? null : (
+        <>
+          {availableCcys.length > 1 && (
+            <div className="flex items-center justify-end gap-2">
+              <span className="text-xs text-muted-foreground">Currency</span>
+              <Select
+                value={effectiveCcy}
+                onChange={(e) => setSelectedCcy(e.target.value)}
+                className="w-28"
+              >
+                {availableCcys.map((ccy) => (
+                  <option key={ccy} value={ccy}>
+                    {ccy.toUpperCase()}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <CategoryBarChart
+              data={summary?.byCurrency?.[effectiveCcy]?.byCategory ?? []}
+              currency={effectiveCcy as Currency}
+            />
+            <BalanceLineChart
+              data={dailyByCcy[effectiveCcy] ?? []}
+              currency={effectiveCcy as Currency}
+            />
+          </div>
+        </>
+      )}
 
       {/* Transaction List */}
       <Card>
@@ -331,13 +349,15 @@ function FinanceContent() {
           <CardTitle className="flex items-center gap-2">
             <Calendar className="h-4 w-4 text-muted-foreground" />
             Transactions
-            <Badge variant="secondary" className="ml-auto text-[10px]">
-              {txList.length}
-            </Badge>
+            {!txPending && !txError && transactions && (
+              <Badge variant="secondary" className="ml-auto text-[10px]">
+                {transactions.length}
+              </Badge>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {txLoading ? (
+          {txPending ? (
             <div className="space-y-3">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3">
@@ -347,13 +367,15 @@ function FinanceContent() {
                 </div>
               ))}
             </div>
-          ) : txList.length === 0 ? (
+          ) : txError ? (
+            <ErrorCard message={txError.message} onRetry={() => txRefetch()} />
+          ) : !transactions || transactions.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              No transactions found. Add your first transaction above.
+              No transactions yet. Add your first transaction above.
             </p>
           ) : (
             <div className="space-y-1">
-              {txList.slice(0, 50).map((tx) => (
+              {transactions.map((tx) => (
                 <TransactionRow key={tx.id} transaction={tx} />
               ))}
             </div>
@@ -364,11 +386,29 @@ function FinanceContent() {
       {/* Quick Add Dialog */}
       <TransactionFormDialog
         open={formOpen}
-        onOpenChange={setFormOpen}
+        onOpenChange={(open) => {
+          setFormOpen(open);
+          if (!open) setFormError(null);
+        }}
         type={formType}
         onSave={handleCreate}
         isSaving={createMut.isPending}
+        error={formError}
       />
+    </div>
+  );
+}
+
+// ─── Error card (F2: honest errors with retry, never demo fallbacks) ─────────
+
+function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center">
+      <AlertCircle className="h-5 w-5 text-destructive" />
+      <p className="text-sm text-destructive">{message}</p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        Retry
+      </Button>
     </div>
   );
 }
@@ -425,9 +465,14 @@ function TransactionRow({ transaction: tx }: { transaction: Transaction }) {
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground truncate">{tx.description}</p>
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-sm font-medium text-foreground truncate">
+          {tx.note || tx.category}
+        </p>
+        <p className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
           {tx.category} &middot; {tx.date}
+          <span className="rounded bg-muted px-1 py-0.5 font-medium uppercase">
+            {tx.account}
+          </span>
         </p>
       </div>
       <span
@@ -449,11 +494,14 @@ function TransactionRow({ transaction: tx }: { transaction: Transaction }) {
 
 function CategoryBarChart({
   data,
+  currency,
 }: {
   data: { category: string; amountCents: number; type: string }[];
+  currency: Currency;
 }) {
   const expenseData = data.filter((d) => d.type === 'expense');
   const incomeData = data.filter((d) => d.type === 'income');
+  const hasData = data.length > 0;
 
   const chartData = {
     labels: [...expenseData.map((d) => d.category), ...incomeData.map((d) => d.category)],
@@ -480,7 +528,8 @@ function CategoryBarChart({
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: (ctx: any) => `${ctx.dataset.label}: ${formatCents(Math.round(ctx.parsed.y * 100))}`,
+          label: (ctx: any) =>
+            `${ctx.dataset.label}: ${formatCents(Math.round(ctx.parsed.y * 100), currency)}`,
         },
       },
     },
@@ -498,7 +547,7 @@ function CategoryBarChart({
         ticks: {
           font: { size: 10 },
           color: 'hsl(215.4, 16.3%, 46.9%)',
-          callback: (v: any) => formatCentsCompact(Math.round(v * 100)),
+          callback: (v: any) => formatCentsCompact(Math.round(v * 100), currency),
         },
       },
     },
@@ -513,9 +562,13 @@ function CategoryBarChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div style={{ height: 220 }}>
-          <Bar data={chartData} options={options} />
-        </div>
+        {hasData ? (
+          <div style={{ height: 220 }}>
+            <Bar data={chartData} options={options} />
+          </div>
+        ) : (
+          <EmptyChart label="No transactions for this currency this month yet." />
+        )}
       </CardContent>
     </Card>
   );
@@ -525,15 +578,17 @@ function CategoryBarChart({
 
 function BalanceLineChart({
   data,
+  currency,
 }: {
-  data: { date: string; balanceCents: number }[];
+  data: { date: string; cumulativeNetCents: number }[];
+  currency: Currency;
 }) {
   const chartData = {
     labels: data.map((d) => d.date.split('-')[2]),
     datasets: [
       {
-        label: 'Balance',
-        data: data.map((d) => d.balanceCents / 100),
+        label: 'Cumulative net',
+        data: data.map((d) => d.cumulativeNetCents / 100),
         borderColor: 'hsl(222.2, 47.4%, 11.2%)',
         backgroundColor: 'hsla(222.2, 47.4%, 11.2%, 0.1)',
         fill: true,
@@ -552,7 +607,8 @@ function BalanceLineChart({
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: (ctx: any) => `Balance: ${formatCents(Math.round(ctx.parsed.y * 100))}`,
+          label: (ctx: any) =>
+            `Balance: ${formatCents(Math.round(ctx.parsed.y * 100), currency)}`,
         },
       },
     },
@@ -570,7 +626,7 @@ function BalanceLineChart({
         ticks: {
           font: { size: 10 },
           color: 'hsl(215.4, 16.3%, 46.9%)',
-          callback: (v: any) => formatCentsCompact(Math.round(v * 100)),
+          callback: (v: any) => formatCentsCompact(Math.round(v * 100), currency),
         },
       },
     },
@@ -585,11 +641,25 @@ function BalanceLineChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div style={{ height: 220 }}>
-          <Line data={chartData} options={options} />
-        </div>
+        {data.length > 0 ? (
+          <div style={{ height: 220 }}>
+            <Line data={chartData} options={options} />
+          </div>
+        ) : (
+          <EmptyChart label="No balance data for this currency this month yet." />
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Empty chart placeholder ──────────────────────────────────────────────────
+
+function EmptyChart({ label }: { label: string }) {
+  return (
+    <div className="flex h-[220px] items-center justify-center rounded-md border border-dashed border-border">
+      <p className="px-4 text-center text-sm text-muted-foreground">{label}</p>
+    </div>
   );
 }
 
@@ -601,6 +671,7 @@ function TransactionFormDialog({
   type,
   onSave,
   isSaving,
+  error,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -609,15 +680,18 @@ function TransactionFormDialog({
     amountCents: number;
     currency: Currency;
     category: string;
-    description: string;
+    account: AccountKind;
+    note: string;
     date: string;
   }) => void;
   isSaving: boolean;
+  error: string | null;
 }) {
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState<Currency>(DEFAULT_CURRENCY);
   const [category, setCategory] = useState('');
-  const [description, setDescription] = useState('');
+  const [account, setAccount] = useState<AccountKind>('cash');
+  const [note, setNote] = useState('');
   const [date, setDate] = useState(todayStr());
 
   const categories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
@@ -627,7 +701,8 @@ function TransactionFormDialog({
       setAmount('');
       setCurrency(DEFAULT_CURRENCY);
       setCategory(categories[0]);
-      setDescription('');
+      setAccount('cash');
+      setNote('');
       setDate(todayStr());
     }
     onOpenChange(isOpen);
@@ -636,12 +711,13 @@ function TransactionFormDialog({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const parsed = parseFloat(amount);
-    if (isNaN(parsed) || parsed <= 0 || !description.trim()) return;
+    if (isNaN(parsed) || parsed <= 0) return;
     onSave({
       amountCents: Math.round(parsed * 100),
       currency,
       category,
-      description: description.trim(),
+      account,
+      note: note.trim(),
       date,
     });
   };
@@ -682,26 +758,39 @@ function TransactionFormDialog({
               </Select>
             </div>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="tx-category">Category</Label>
-            <Select
-              id="tx-category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-            >
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </Select>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="tx-category">Category</Label>
+              <Select
+                id="tx-category"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+              >
+                {categories.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="tx-account">Account</Label>
+              <Select
+                id="tx-account"
+                value={account}
+                onChange={(e) => setAccount(e.target.value as AccountKind)}
+              >
+                <option value="cash">Cash</option>
+                <option value="bank">Bank</option>
+              </Select>
+            </div>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="tx-desc">Description</Label>
+            <Label htmlFor="tx-note">Note</Label>
             <Input
-              id="tx-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              id="tx-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
               placeholder="What was this for?"
             />
           </div>
@@ -714,11 +803,16 @@ function TransactionFormDialog({
               onChange={(e) => setDate(e.target.value)}
             />
           </div>
+          {error && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              {error}
+            </p>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={() => handleOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isSaving || !amount || !description.trim()}>
+            <Button type="submit" disabled={isSaving || !amount}>
               {isSaving ? 'Saving...' : 'Add Transaction'}
             </Button>
           </div>

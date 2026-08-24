@@ -1,74 +1,69 @@
 import { Hono } from "hono";
 import { APP_VERSION, APP_NAME } from "../version";
+import type { Bindings, AppDb } from "../db/client";
 
-const health = new Hono();
+const health = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
 const startTime = Date.now();
 
 health.get("/health", (c) => {
   const uptimeMs = Date.now() - startTime;
-  const uptimeSec = Math.floor(uptimeMs / 1000);
-  const hours = Math.floor(uptimeSec / 3600);
-  const minutes = Math.floor((uptimeSec % 3600) / 60);
-  const seconds = uptimeSec % 60;
-
   return c.json({
     status: "ok",
     app: APP_NAME,
     version: APP_VERSION,
-    uptime: `${hours}h ${minutes}m ${seconds}s`,
-    uptimeMs,
+    // Per-isolate uptime: Workers isolate constantly — informational only.
+    isolateUptimeMs: uptimeMs,
     timestamp: new Date().toISOString(),
   });
 });
 
-// Detailed status endpoint
-health.get("/status", (c) => {
+// Detailed status endpoint — actually verifies the D1 binding with SELECT 1
+// (was previously hardcoded "ok" without touching the database: B6/D11).
+health.get("/status", async (c) => {
   const uptimeMs = Date.now() - startTime;
-  const uptimeSec = Math.floor(uptimeMs / 1000);
-  const hours = Math.floor(uptimeSec / 3600);
-  const minutes = Math.floor((uptimeSec % 3600) / 60);
-  const seconds = uptimeSec % 60;
-
   const startedAt = new Date(startTime).toISOString();
-  const memUsage = process.memoryUsage();
 
-  return c.json({
-    app: {
-      name: APP_NAME,
-      version: APP_VERSION,
-      status: "operational",
-      uptime: `${hours}h ${minutes}m ${seconds}s`,
-      uptimeMs,
-      startedAt,
-    },
-    environment: c.env?.ENVIRONMENT || "development",
-    timestamp: new Date().toISOString(),
-    components: [
-      {
-        name: "Application",
-        value: APP_NAME,
-        status: "ok",
+  let dbOk = false;
+  let dbLatencyMs: number | null = null;
+  try {
+    const t0 = Date.now();
+    const result = await c.env.DB.prepare("SELECT 1 AS one").first<{ one: number }>();
+    dbLatencyMs = Date.now() - t0;
+    dbOk = result?.one === 1;
+  } catch {
+    dbOk = false;
+  }
+
+  return c.json(
+    {
+      app: {
+        name: APP_NAME,
         version: APP_VERSION,
+        status: dbOk ? "operational" : "degraded",
+        isolateUptimeMs: uptimeMs,
+        startedAt,
       },
-      {
-        name: "Database",
-        value: "D1",
-        status: "ok",
-        type: "Cloudflare D1",
-      },
-      {
-        name: "Runtime",
-        value: "Cloudflare Workers",
-        status: "ok",
-        type: "Edge",
-      },
-    ],
-    memory: {
-      heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024 * 100) / 100} MB`,
-      heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024 * 100) / 100} MB`,
-      rss: `${Math.round(memUsage.rss / 1024 / 1024 * 100) / 100} MB`,
+      environment: c.env?.ENVIRONMENT || "development",
+      timestamp: new Date().toISOString(),
+      components: [
+        {
+          name: "Application",
+          value: APP_NAME,
+          status: "ok",
+          version: APP_VERSION,
+        },
+        {
+          name: "Database",
+          value: "D1",
+          status: dbOk ? "ok" : "unreachable",
+          type: "Cloudflare D1",
+          latencyMs: dbLatencyMs,
+          checkedWith: "SELECT 1",
+        },
+      ],
     },
-  });
+    dbOk ? 200 : 503,
+  );
 });
 
 export default health;

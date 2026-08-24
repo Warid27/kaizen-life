@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
+import { sql } from "drizzle-orm";
 import type { Bindings, AppDb } from "../db/client";
 import * as XLSX from "xlsx";
 import crypto from "crypto";
@@ -31,31 +32,35 @@ import {
   assignments,
   semesterEvents,
   monthlyReviews,
-  users,
   reminders,
 } from "../db/schema";
 import type { EntityType } from "@kaizenlife/shared";
+import { apiError, validationHook } from "../lib/api";
 
-const importRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
-
-const USER_ID = "default-user";
+const importRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
 // ---------------------------------------------------------------------------
-// In-memory session storage (swap for Redis/DB in production)
+// In-memory session storage.
+// KNOWN LIMITATION (S6): Worker isolates are ephemeral and per-isolate, so an
+// upload may land in a different isolate than its preview/execute calls,
+// producing intermittent "Session not found". Sessions are bounded below so
+// this state can never become a memory-DoS vector; a durable (D1/KV) session
+// store is the real fix and is tracked as follow-up debt.
 // ---------------------------------------------------------------------------
 interface ImportSession {
   data: Record<string, unknown>[];
   headers: string[];
+  userId: string;
   createdAt: number;
 }
 
 const sessions = new Map<string, ImportSession>();
 
-// Cleanup sessions older than 1 hour. Purged lazily on access because
-// Workers forbids setInterval at module scope.
-const SESSION_TTL_MS = 3_600_000;
+export const SESSION_TTL_MS = 3_600_000;
+// Hard ceilings so concurrent uploads cannot OOM the 128MB isolate (S6).
+const MAX_SESSIONS = 50;
 
-function purgeExpiredSessions() {
+export function purgeExpiredSessions() {
   const now = Date.now();
   for (const [key, session] of sessions.entries()) {
     if (now - session.createdAt > SESSION_TTL_MS) {
@@ -64,11 +69,40 @@ function purgeExpiredSessions() {
   }
 }
 
+function evictOldestSessionIfNeeded() {
+  while (sessions.size >= MAX_SESSIONS) {
+    let oldestKey: string | null = null;
+    let oldestAt = Infinity;
+    for (const [key, session] of sessions.entries()) {
+      if (session.createdAt < oldestAt) {
+        oldestAt = session.createdAt;
+        oldestKey = key;
+      }
+    }
+    if (!oldestKey) break;
+    sessions.delete(oldestKey);
+  }
+}
+
+/**
+ * Build the ON CONFLICT DO UPDATE set clause: every listed DB column takes
+ * the value from the conflicting incoming row (`excluded.<col>`).
+ */
+function buildUpsertSet(dbColumns: string[]): Record<string, unknown> {
+  const set: Record<string, unknown> = {};
+  for (const col of dbColumns) {
+    set[col] = sql`excluded.${sql.identifier(col)}`;
+  }
+  return set;
+}
+
 // ---------------------------------------------------------------------------
 // Table lookup map
 // ---------------------------------------------------------------------------
+// NOTE: `users` intentionally NOT importable (S7): a public write path into
+// the user table is an account-injection primitive the moment real auth lands.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const TABLE_MAP: Record<EntityType, any> = {
+const TABLE_MAP: Partial<Record<EntityType, any>> = {
   transactions,
   tasks,
   habits,
@@ -89,7 +123,6 @@ const TABLE_MAP: Record<EntityType, any> = {
   assignments,
   semesterEvents,
   monthlyReviews,
-  users,
   reminders,
 };
 
@@ -98,8 +131,12 @@ const TABLE_MAP: Record<EntityType, any> = {
 // ---------------------------------------------------------------------------
 const ALLOWED_EXTENSIONS = ["xlsx", "xls", "csv"];
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+// Hard budgets (S6): a 5MB xlsx can expand 10–100x through sheet_to_json;
+// these caps bound worst-case memory per session.
+export const MAX_IMPORT_ROWS = 5000;
+export const MAX_IMPORT_COLUMNS = 64;
 
-function validateFile(file: File): { valid: boolean; error?: string } {
+export function validateFile(file: File): { valid: boolean; error?: string } {
   if (file.size > MAX_FILE_SIZE) {
     return {
       valid: false,
@@ -123,39 +160,69 @@ function validateFile(file: File): { valid: boolean; error?: string } {
 // ---------------------------------------------------------------------------
 importRouter.post("/import/upload", async (c) => {
   try {
+    const userId = c.get("userId");
     const body = await c.req.parseBody();
     const file = body["file"];
 
     if (!file || !(file instanceof File)) {
-      return c.json({ error: "No file provided" }, 400);
+      return apiError(c, 400, "VALIDATION_ERROR", "No file provided");
     }
 
     const validation = validateFile(file);
     if (!validation.valid) {
-      return c.json({ error: validation.error }, 400);
+      return apiError(c, 400, "VALIDATION_ERROR", validation.error ?? "Invalid file");
     }
 
+    // Defense-in-depth (S6): extension checks are spoofable; SheetJS parses
+    // content regardless of extension, so wrap parse failures explicitly.
     const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array" });
+    let workbook: XLSX.WorkBook;
+    try {
+      workbook = XLSX.read(buffer, { type: "array" });
+    } catch {
+      return apiError(c, 400, "VALIDATION_ERROR", "File could not be parsed as a spreadsheet");
+    }
 
     const sheetName = workbook.SheetNames[0];
     if (!sheetName) {
-      return c.json({ error: "No sheets found in file" }, 400);
+      return apiError(c, 400, "VALIDATION_ERROR", "No sheets found in file");
     }
 
     const sheet = workbook.Sheets[sheetName];
+    if (!sheet) {
+      return apiError(c, 400, "VALIDATION_ERROR", "No sheets found in file");
+    }
+
     const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
 
     if (data.length === 0) {
-      return c.json({ error: "File contains no data rows" }, 400);
+      return apiError(c, 400, "VALIDATION_ERROR", "File contains no data rows");
+    }
+    if (data.length > MAX_IMPORT_ROWS) {
+      return apiError(
+        c,
+        400,
+        "VALIDATION_ERROR",
+        `File contains ${data.length} rows; maximum is ${MAX_IMPORT_ROWS}. Split the file and import in parts.`,
+      );
+    }
+    if (data[0] && Object.keys(data[0]).length > MAX_IMPORT_COLUMNS) {
+      return apiError(
+        c,
+        400,
+        "VALIDATION_ERROR",
+        `File has more than ${MAX_IMPORT_COLUMNS} columns; maximum is ${MAX_IMPORT_COLUMNS}.`,
+      );
     }
 
     // Extract headers from first row keys
     const headers = Object.keys(data[0]!);
 
-    const sessionId = crypto.randomUUID();
     purgeExpiredSessions();
-    sessions.set(sessionId, { data, headers, createdAt: Date.now() });
+    evictOldestSessionIfNeeded();
+
+    const sessionId = crypto.randomUUID();
+    sessions.set(sessionId, { data, headers, userId, createdAt: Date.now() });
 
     return c.json({
       sessionId,
@@ -165,7 +232,7 @@ importRouter.post("/import/upload", async (c) => {
     });
   } catch (err) {
     console.error("Import upload error:", err);
-    return c.json({ error: "Failed to process file" }, 500);
+    return apiError(c, 500, "INTERNAL", "Failed to process file");
   }
 });
 
@@ -541,17 +608,21 @@ importRouter.post(
     }
   }),
   async (c) => {
+    const userId = c.get("userId");
     const { sessionId, entityType, mapping } = c.req.valid("json");
 
     purgeExpiredSessions();
     const session = sessions.get(sessionId);
     if (!session) {
-      return c.json({ error: "Session not found or expired" }, 404);
+      return apiError(c, 404, "NOT_FOUND", "Session not found or expired");
+    }
+    if (session.userId !== userId) {
+      return apiError(c, 403, "UNAUTHORIZED", "Session belongs to another user");
     }
 
     const validationSchema = ENTITY_VALIDATION_SCHEMAS[entityType];
     if (!validationSchema) {
-      return c.json({ error: "Unsupported entity type" }, 400);
+      return apiError(c, 400, "VALIDATION_ERROR", "Unsupported entity type");
     }
 
     const errors: Array<{ row: number; field: string; message: string }> = [];
@@ -592,7 +663,7 @@ importRouter.post(
 );
 
 // ---------------------------------------------------------------------------
-// POST /import/execute — Insert valid rows into the database
+// POST /import/execute — Insert valid rows into the database (atomic)
 // ---------------------------------------------------------------------------
 importRouter.post(
   "/import/execute",
@@ -606,83 +677,158 @@ importRouter.post(
   }),
   async (c) => {
     const db = c.get("db");
+    const userId = c.get("userId");
     const { sessionId, entityType, mapping } = c.req.valid("json");
 
     purgeExpiredSessions();
     const session = sessions.get(sessionId);
     if (!session) {
-      return c.json({ error: "Session not found or expired" }, 404);
+      return apiError(c, 404, "NOT_FOUND", "Session not found or expired");
+    }
+    if (session.userId !== userId) {
+      return apiError(c, 403, "UNAUTHORIZED", "Session belongs to another user");
     }
 
     const validationSchema = ENTITY_VALIDATION_SCHEMAS[entityType];
     if (!validationSchema) {
-      return c.json({ error: "Unsupported entity type" }, 400);
+      return apiError(c, 400, "VALIDATION_ERROR", "Unsupported entity type");
     }
 
     const table = TABLE_MAP[entityType];
     if (!table) {
-      return c.json({ error: "Unsupported entity type" }, 400);
+      // Includes entityType === "users" — deliberately not importable (S7).
+      return apiError(c, 400, "VALIDATION_ERROR", "Unsupported entity type");
     }
 
     const now = Math.floor(Date.now() / 1000);
     const errors: Array<{ row: number; field: string; message: string }> = [];
-    let imported = 0;
-    let skipped = 0;
+    const validRows: Array<Record<string, unknown>> = [];
 
-    const BATCH_SIZE = 100;
+    // Pass 1: map + validate every row up-front so the write phase is atomic.
+    for (let i = 0; i < session.data.length; i++) {
+      const row = session.data[i]!;
+      const mappedRow: Record<string, unknown> = {};
 
-    for (let i = 0; i < session.data.length; i += BATCH_SIZE) {
-      const batch = session.data.slice(i, i + BATCH_SIZE);
-      const validRows: Array<Record<string, unknown>> = [];
-
-      for (let j = 0; j < batch.length; j++) {
-        const row = batch[j]!;
-        const mappedRow: Record<string, unknown> = {};
-
-        for (const [excelCol, dbField] of Object.entries(mapping)) {
-          if (row[excelCol] !== undefined && row[excelCol] !== null) {
-            mappedRow[dbField] = row[excelCol];
-          }
-        }
-
-        const result = validationSchema.safeParse(mappedRow);
-        if (result.success) {
-          validRows.push({
-            ...(result.data as Record<string, unknown>),
-            id: crypto.randomUUID(),
-            userId: USER_ID,
-            createdAt: now,
-            updatedAt: now,
-          });
-        } else {
-          skipped++;
-          for (const err of result.error.errors) {
-            errors.push({
-              row: i + j + 2,
-              field: err.path.join("."),
-              message: err.message,
-            });
-          }
+      for (const [excelCol, dbField] of Object.entries(mapping)) {
+        if (row[excelCol] !== undefined && row[excelCol] !== null) {
+          mappedRow[dbField] = row[excelCol];
         }
       }
 
-      if (validRows.length > 0) {
-        try {
-          // Drizzle batch insert — insert all valid rows in the batch
-          await db.insert(table).values(validRows).run();
-          imported += validRows.length;
-        } catch (err) {
-          console.error("Batch insert error:", err);
-          skipped += validRows.length;
+      const result = validationSchema.safeParse(mappedRow);
+      if (result.success) {
+        validRows.push({
+          ...(result.data as Record<string, unknown>),
+          id: crypto.randomUUID(),
+          userId,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } else {
+        for (const err of result.error.errors) {
           errors.push({
-            row: i + 1,
-            field: "database",
-            message:
-              err instanceof Error ? err.message : "Failed to insert batch",
+            row: i + 2, // +1 for 0-index, +1 for header row
+            field: err.path.join("."),
+            message: err.message,
           });
         }
       }
     }
+
+    // Within-file dedup: re-uploading the same file twice must not double
+    // every row when a single retry is retried after a network error.
+    const seen = new Set<string>();
+    const dedupedRows = validRows.filter((r) => {
+      const key = JSON.stringify(r);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    // Natural-key upserts (B-import): these entities have UNIQUE keys, so
+    // re-imports update instead of colliding/duplicating. Other entities
+    // rely on the within-file dedup above; cross-run duplicates of
+    // non-keyed entities remain possible and are documented debt.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let conflictConfig: { target: any[]; set: Record<string, unknown> } | null = null;
+    if (entityType === "habitLogs") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const t = table as any;
+      conflictConfig = {
+        target: [t.habitId, t.date],
+        set: buildUpsertSet(["completed_count", "target_count", "note", "updated_at", "deleted_at"]),
+      };
+    } else if (entityType === "checkins" || entityType === "diaryEntries") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const t = table as any;
+      conflictConfig = {
+        target: [t.userId, t.date],
+        set: buildUpsertSet(
+          entityType === "checkins"
+            ? ["bed_time", "wake_time", "nap_minutes", "total_sleep_minutes", "sleep_quality", "mood", "energy", "stress", "note", "updated_at", "deleted_at"]
+            : ["grateful_for", "lesson_learned", "tomorrow_focus", "free_text", "updated_at", "deleted_at"],
+        ),
+      };
+    } else if (entityType === "monthlyReviews") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const t = table as any;
+      conflictConfig = {
+        target: [t.userId, t.year, t.month],
+        set: buildUpsertSet([
+          "biggest_achievement",
+          "biggest_lesson",
+          "next_month_priorities",
+          "auto_summary_json",
+          "updated_at",
+          "deleted_at",
+        ]),
+      };
+    }
+
+    const BATCH_SIZE = 100;
+    type BatchStmts = Parameters<AppDb["batch"]>[0];
+    const statements: unknown[] = [];
+
+    for (let i = 0; i < dedupedRows.length; i += BATCH_SIZE) {
+      const chunk = dedupedRows.slice(i, i + BATCH_SIZE);
+      const base = db.insert(table).values(chunk);
+      const stmt = conflictConfig ? base.onConflictDoUpdate(conflictConfig as never) : base;
+      statements.push(stmt);
+    }
+
+    let imported = 0;
+
+    if (statements.length > 0) {
+      try {
+        // D1 batch() is all-or-nothing: no more partial imports where an
+        // earlier batch commits and a later one fails (B-import HIGH).
+        await db.batch(statements as unknown as BatchStmts);
+        imported = dedupedRows.length;
+      } catch (err) {
+        console.error("Atomic import failed:", err);
+        sessions.delete(sessionId);
+        return c.json(
+          {
+            imported: 0,
+            skipped: validRows.length - dedupedRows.length + dedupedRows.length,
+            errors: [
+              ...errors,
+              {
+                row: 0,
+                field: "database",
+                message:
+                  err instanceof Error
+                    ? `Import aborted atomically, nothing was written: ${err.message}`
+                    : "Import aborted atomically, nothing was written",
+              },
+            ],
+          },
+          500,
+        );
+      }
+    }
+
+    const skipped = session.data.length - dedupedRows.length;
 
     // Cleanup session after successful execution
     sessions.delete(sessionId);
@@ -695,11 +841,19 @@ importRouter.post(
 // DELETE /import/:sessionId — Cancel and cleanup session
 // ---------------------------------------------------------------------------
 importRouter.delete("/import/:sessionId", async (c) => {
-  const sessionId = c.req.param("sessionId");
-  const existed = sessions.delete(sessionId);
-  if (!existed) {
-    return c.json({ error: "Session not found" }, 404);
+  const userId = c.get("userId");
+  const sessionId = String(c.req.param("sessionId"));
+
+  purgeExpiredSessions();
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return apiError(c, 404, "NOT_FOUND", "Session not found");
   }
+  if (session.userId !== userId) {
+    return apiError(c, 403, "UNAUTHORIZED", "Session belongs to another user");
+  }
+
+  sessions.delete(sessionId);
   return c.json({ success: true });
 });
 

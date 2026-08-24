@@ -2,14 +2,32 @@ const BASE_URL = import.meta.env.PUBLIC_API_URL || 'http://localhost:3001';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/** Unified server error envelope: { error: { code, message, details? } } */
+export interface ApiErrorBody {
+  code?: string;
+  message?: string;
+  details?: unknown;
+}
+
 export class ApiError extends Error {
+  /** Machine-readable code from the unified envelope ("VALIDATION_ERROR", …) */
+  public code?: string;
+  /** Field-level details (e.g. Zod flatten output) when provided */
+  public details?: unknown;
+
   constructor(
     public status: number,
     public body: unknown,
     message?: string,
   ) {
-    super(message ?? `API error ${status}`);
+    const envelope =
+      body && typeof body === 'object' && 'error' in body
+        ? ((body as { error?: ApiErrorBody }).error ?? {})
+        : {};
+    super(message ?? envelope.message ?? `API error ${status}`);
     this.name = 'ApiError';
+    this.code = envelope.code;
+    this.details = envelope.details;
   }
 }
 
@@ -105,9 +123,10 @@ export function apiPatch<T>(
 
 export function apiDelete<T>(
   path: string,
+  body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
-  return apiFetch<T>(path, { method: 'DELETE', signal });
+  return apiFetch<T>(path, { method: 'DELETE', body, signal });
 }
 
 export function apiPut<T>(

@@ -23,12 +23,15 @@ export function useDiaryEntries(range?: DiaryRange) {
   });
 }
 
-/** Get a single diary entry by date */
+/** Get a single diary entry by date.
+ *  The server has no GET-by-date route — derive it from the range list
+ *  (from = to = date), fixing the guaranteed-404 path (B1). */
 export function useDiaryEntry(date: string) {
   return useQuery({
     queryKey: diaryKeys.byDate(date),
     queryFn: ({ signal }) =>
-      apiGet<DiaryEntry>(`/api/diary/${date}`, undefined, signal),
+      apiGet<DiaryEntry[]>('/api/diary', { from: date, to: date }, signal),
+    select: (rows) => rows.find((r) => r.date === date) ?? null,
     enabled: !!date,
   });
 }

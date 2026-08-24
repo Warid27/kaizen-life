@@ -23,12 +23,15 @@ export function useCheckins(range?: CheckinRange) {
   });
 }
 
-/** Get a single check-in by date */
+/** Get a single check-in by date.
+ *  The server has no GET-by-date route — derive it from the range list
+ *  (from = to = date), fixing the guaranteed-404 path (B1). */
 export function useCheckin(date: string) {
   return useQuery({
     queryKey: checkinKeys.byDate(date),
     queryFn: ({ signal }) =>
-      apiGet<Checkin>(`/api/checkins/${date}`, undefined, signal),
+      apiGet<Checkin[]>('/api/checkins', { from: date, to: date }, signal),
+    select: (rows) => rows.find((r) => r.date === date) ?? null,
     enabled: !!date,
   });
 }

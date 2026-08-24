@@ -2,20 +2,18 @@ import { Hono } from "hono";
 import { QuickCaptureSchema } from "@kaizenlife/shared";
 import type { Bindings, AppDb } from "../db/client";
 import { tasks } from "../db/schema";
+import { apiError } from "../lib/api";
 
-const capture = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
+const capture = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
 // POST /capture — Quick Capture: create a task with just a title
 capture.post("/capture", async (c) => {
   const db = c.get("db");
-  const body = await c.req.json();
-  const parsed = QuickCaptureSchema.safeParse(body);
+  const userId = c.get("userId");
+  const parsed = QuickCaptureSchema.safeParse(await c.req.json());
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", issues: parsed.error.issues },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const data = parsed.data;
@@ -24,20 +22,22 @@ capture.post("/capture", async (c) => {
 
   const values = {
     id,
-    userId: "default-user", // TODO: replace with auth session user
+    userId,
     title: data.title,
     description: data.description ?? null,
     date: data.date ?? null,
     startTime: data.startTime ?? null,
     endTime: data.endTime ?? null,
     estimatedDurationMin: data.estimatedDurationMin ?? null,
-    priority: data.priority ?? "medium",
+    priority: data.priority ?? ("medium" as const),
     status: "todo" as const,
     projectId: data.projectId ?? null,
     courseId: data.courseId ?? null,
     tags: data.tags ?? null,
+    completedAt: null,
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
   };
 
   await db.insert(tasks).values(values).run();

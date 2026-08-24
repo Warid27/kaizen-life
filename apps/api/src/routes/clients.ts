@@ -9,10 +9,9 @@ import {
   FollowupFilterSchema,
 } from "@kaizenlife/shared";
 import { eq, and, isNull, desc } from "drizzle-orm";
+import { apiError, notFound } from "../lib/api";
 
-const clientsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
-
-const USER_ID = "default-user";
+const clientsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
 // ══════════════════════════════════════════════════════════════
 // CLIENTS
@@ -21,10 +20,11 @@ const USER_ID = "default-user";
 // ─── List Clients ────────────────────────────────────────────
 clientsRouter.get("/clients", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const rows = await db
     .select()
     .from(clients)
-    .where(and(eq(clients.userId, USER_ID), isNull(clients.deletedAt)))
+    .where(and(eq(clients.userId, userId), isNull(clients.deletedAt)))
     .orderBy(desc(clients.createdAt))
     .all();
 
@@ -34,16 +34,17 @@ clientsRouter.get("/clients", async (c) => {
 // ─── Get Client by ID ────────────────────────────────────────
 clientsRouter.get("/clients/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const row = await db
     .select()
     .from(clients)
-    .where(and(eq(clients.id, id), eq(clients.userId, USER_ID), isNull(clients.deletedAt)))
+    .where(and(eq(clients.id, id), eq(clients.userId, userId), isNull(clients.deletedAt)))
     .get();
 
   if (!row) {
-    return c.json({ error: "Client not found" }, 404);
+    return notFound(c, "Client");
   }
 
   return c.json(row);
@@ -52,14 +53,12 @@ clientsRouter.get("/clients/:id", async (c) => {
 // ─── Create Client ───────────────────────────────────────────
 clientsRouter.post("/clients", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const body = await c.req.json();
   const parsed = CreateClientSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const data = parsed.data;
@@ -70,7 +69,7 @@ clientsRouter.post("/clients", async (c) => {
     .insert(clients)
     .values({
       id,
-      userId: USER_ID,
+      userId,
       name: data.name,
       company: data.company ?? null,
       contactInfo: data.contactInfo ?? null,
@@ -87,25 +86,23 @@ clientsRouter.post("/clients", async (c) => {
 // ─── Update Client ───────────────────────────────────────────
 clientsRouter.patch("/clients/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
   const body = await c.req.json();
   const parsed = UpdateClientSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const existing = await db
-    .select()
+    .select({ id: clients.id })
     .from(clients)
-    .where(and(eq(clients.id, id), eq(clients.userId, USER_ID), isNull(clients.deletedAt)))
+    .where(and(eq(clients.id, id), eq(clients.userId, userId), isNull(clients.deletedAt)))
     .get();
 
   if (!existing) {
-    return c.json({ error: "Client not found" }, 404);
+    return notFound(c, "Client");
   }
 
   const data = parsed.data;
@@ -118,10 +115,11 @@ clientsRouter.patch("/clients/:id", async (c) => {
   if (data.contactInfo !== undefined) fieldsToUpdate.contactInfo = data.contactInfo ?? null;
   if (data.notes !== undefined) fieldsToUpdate.notes = data.notes ?? null;
 
+  // Guards kept in the write itself (B5).
   const updated = await db
     .update(clients)
     .set(fieldsToUpdate)
-    .where(eq(clients.id, id))
+    .where(and(eq(clients.id, id), eq(clients.userId, userId), isNull(clients.deletedAt)))
     .returning()
     .get();
 
@@ -131,23 +129,24 @@ clientsRouter.patch("/clients/:id", async (c) => {
 // ─── Delete Client (soft) ────────────────────────────────────
 clientsRouter.delete("/clients/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const existing = await db
-    .select()
+    .select({ id: clients.id })
     .from(clients)
-    .where(and(eq(clients.id, id), eq(clients.userId, USER_ID), isNull(clients.deletedAt)))
+    .where(and(eq(clients.id, id), eq(clients.userId, userId), isNull(clients.deletedAt)))
     .get();
 
   if (!existing) {
-    return c.json({ error: "Client not found" }, 404);
+    return notFound(c, "Client");
   }
 
   const now = Math.floor(Date.now() / 1000);
 
   await db.update(clients)
     .set({ deletedAt: now, updatedAt: now })
-    .where(eq(clients.id, id))
+    .where(and(eq(clients.id, id), eq(clients.userId, userId), isNull(clients.deletedAt)))
     .run();
 
   return c.json({ success: true });
@@ -160,6 +159,7 @@ clientsRouter.delete("/clients/:id", async (c) => {
 // ─── List Follow-ups ─────────────────────────────────────────
 clientsRouter.get("/followups", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const rawQuery: Record<string, string> = {};
   for (const [k, v] of Object.entries(c.req.query())) {
     if (v !== undefined) rawQuery[k] = v;
@@ -167,15 +167,12 @@ clientsRouter.get("/followups", async (c) => {
   const parsed = FollowupFilterSchema.safeParse(rawQuery);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Invalid query parameters", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Invalid query parameters", parsed.error.flatten());
   }
 
   const { clientId, status } = parsed.data;
   const conditions = [
-    eq(clientFollowups.userId, USER_ID),
+    eq(clientFollowups.userId, userId),
     isNull(clientFollowups.deletedAt),
   ];
 
@@ -195,7 +192,8 @@ clientsRouter.get("/followups", async (c) => {
 // ─── Get Follow-up by ID ─────────────────────────────────────
 clientsRouter.get("/followups/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const row = await db
     .select()
@@ -203,14 +201,14 @@ clientsRouter.get("/followups/:id", async (c) => {
     .where(
       and(
         eq(clientFollowups.id, id),
-        eq(clientFollowups.userId, USER_ID),
+        eq(clientFollowups.userId, userId),
         isNull(clientFollowups.deletedAt),
       ),
     )
     .get();
 
   if (!row) {
-    return c.json({ error: "Follow-up not found" }, 404);
+    return notFound(c, "Follow-up");
   }
 
   return c.json(row);
@@ -219,14 +217,12 @@ clientsRouter.get("/followups/:id", async (c) => {
 // ─── Create Follow-up ────────────────────────────────────────
 clientsRouter.post("/followups", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const body = await c.req.json();
   const parsed = CreateClientFollowupSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const data = parsed.data;
@@ -237,7 +233,7 @@ clientsRouter.post("/followups", async (c) => {
     .insert(clientFollowups)
     .values({
       id,
-      userId: USER_ID,
+      userId,
       clientId: data.clientId,
       lastContactDate: data.lastContactDate ?? null,
       nextFollowupDate: data.nextFollowupDate ?? null,
@@ -255,31 +251,29 @@ clientsRouter.post("/followups", async (c) => {
 // ─── Update Follow-up ────────────────────────────────────────
 clientsRouter.patch("/followups/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
   const body = await c.req.json();
   const parsed = UpdateClientFollowupSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const existing = await db
-    .select()
+    .select({ id: clientFollowups.id })
     .from(clientFollowups)
     .where(
       and(
         eq(clientFollowups.id, id),
-        eq(clientFollowups.userId, USER_ID),
+        eq(clientFollowups.userId, userId),
         isNull(clientFollowups.deletedAt),
       ),
     )
     .get();
 
   if (!existing) {
-    return c.json({ error: "Follow-up not found" }, 404);
+    return notFound(c, "Follow-up");
   }
 
   const data = parsed.data;
@@ -293,10 +287,17 @@ clientsRouter.patch("/followups/:id", async (c) => {
   if (data.status !== undefined) fieldsToUpdate.status = data.status;
   if (data.notes !== undefined) fieldsToUpdate.notes = data.notes ?? null;
 
+  // Guards kept in the write itself (B5).
   const updated = await db
     .update(clientFollowups)
     .set(fieldsToUpdate)
-    .where(eq(clientFollowups.id, id))
+    .where(
+      and(
+        eq(clientFollowups.id, id),
+        eq(clientFollowups.userId, userId),
+        isNull(clientFollowups.deletedAt),
+      ),
+    )
     .returning()
     .get();
 
@@ -306,29 +307,36 @@ clientsRouter.patch("/followups/:id", async (c) => {
 // ─── Delete Follow-up (soft) ─────────────────────────────────
 clientsRouter.delete("/followups/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const existing = await db
-    .select()
+    .select({ id: clientFollowups.id })
     .from(clientFollowups)
     .where(
       and(
         eq(clientFollowups.id, id),
-        eq(clientFollowups.userId, USER_ID),
+        eq(clientFollowups.userId, userId),
         isNull(clientFollowups.deletedAt),
       ),
     )
     .get();
 
   if (!existing) {
-    return c.json({ error: "Follow-up not found" }, 404);
+    return notFound(c, "Follow-up");
   }
 
   const now = Math.floor(Date.now() / 1000);
 
   await db.update(clientFollowups)
     .set({ deletedAt: now, updatedAt: now })
-    .where(eq(clientFollowups.id, id))
+    .where(
+      and(
+        eq(clientFollowups.id, id),
+        eq(clientFollowups.userId, userId),
+        isNull(clientFollowups.deletedAt),
+      ),
+    )
     .run();
 
   return c.json({ success: true });

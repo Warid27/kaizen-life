@@ -247,7 +247,7 @@ function StandupView() {
       <TeamMemberFormDialog
         open={teamFormOpen}
         onOpenChange={setTeamFormOpen}
-        onSave={(data) => createTeamMemberMut.mutate(data, { onSuccess: () => setTeamFormOpen(false) })}
+        onSave={(data) => createTeamMemberMut.mutate({ ...data, userId: '' }, { onSuccess: () => setTeamFormOpen(false) })}
         isSaving={createTeamMemberMut.isPending}
       />
     </div>
@@ -862,7 +862,7 @@ function ClientsView() {
     if (editingClient) {
       updateClientMut.mutate({ id: editingClient.id, data }, { onSuccess: () => setFormOpen(false) });
     } else {
-      createClientMut.mutate(data, { onSuccess: () => setFormOpen(false) });
+      createClientMut.mutate({ ...data, userId: '' }, { onSuccess: () => setFormOpen(false) });
     }
   };
 

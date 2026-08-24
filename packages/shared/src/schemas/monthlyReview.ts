@@ -12,7 +12,12 @@ export const CreateReviewSchema = z.object({
 
 export type CreateReviewInput = z.infer<typeof CreateReviewSchema>;
 
+// ─── Update Monthly Review ──────────────────────────────────────────────────
+// year/month are OPTIONAL here: they duplicate the /reviews/:year/:month path
+// params and the server injects them — a compliant REST caller gets 400 otherwise.
 export const UpdateReviewSchema = z.object({
+  year: z.number().int().min(2020).max(2100).optional(),
+  month: z.number().int().min(1).max(12).optional(),
   biggestAchievement: z.string().nullable().optional(),
   biggestLesson: z.string().nullable().optional(),
   nextMonthPriorities: z.string().nullable().optional(),

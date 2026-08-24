@@ -42,6 +42,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { todayStr, shiftDays } from '@/stores/ui';
 import type { Course, CourseSchedule, Assignment, Semester, SemesterEvent } from '@/queries/college';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -514,15 +515,18 @@ function AssignmentsView() {
   const updateMut = useUpdateAssignment();
   const deleteMut = useDeleteAssignment();
 
-  const today = new Date().toISOString().split('T')[0];
+  // Browser-local "today" (BL2 — UTC ISO date counted assignments as overdue
+  // before 07:00 WIB) and a real 7-day shift (was string concatenation).
+  const today = todayStr();
+  const soonCutoff = shiftDays(today, 7);
 
   const stats = useMemo(() => {
     const all = assignments ?? [];
     const overdue = all.filter((a) => a.status !== 'submitted' && a.status !== 'graded' && a.dueDate < today).length;
-    const dueSoon = all.filter((a) => a.status !== 'submitted' && a.status !== 'graded' && a.dueDate >= today && a.dueDate <= today + 7).length;
+    const dueSoon = all.filter((a) => a.status !== 'submitted' && a.status !== 'graded' && a.dueDate >= today && a.dueDate <= soonCutoff).length;
     const completed = all.filter((a) => a.status === 'submitted' || a.status === 'graded').length;
     return { total: all.length, overdue, dueSoon, completed };
-  }, [assignments, today]);
+  }, [assignments, today, soonCutoff]);
 
   const handleEdit = (a: Assignment) => {
     setEditingAssignment(a);
@@ -888,6 +892,7 @@ function SemesterView() {
   }, [activeSemester]);
 
   // Course stats for this semester
+  const today = todayStr();
   const courseStats = useMemo(() => {
     const semesterCourses = (courses ?? []);
     const semesterCourseIds = new Set(semesterCourses.map((c) => c.id));
@@ -895,11 +900,10 @@ function SemesterView() {
     const total = semesterAssignments.length;
     const completed = semesterAssignments.filter((a) => a.status === 'submitted' || a.status === 'graded').length;
     const overdue = semesterAssignments.filter((a) => {
-      const today = new Date().toISOString().split('T')[0];
       return a.status !== 'submitted' && a.status !== 'graded' && a.dueDate < today;
     }).length;
     return { courseCount: semesterCourses.length, total, completed, overdue };
-  }, [courses, assignments]);
+  }, [courses, assignments, today]);
 
   const handleSaveSemester = (data: { name: string; startDate: string; endDate: string }) => {
     if (editingSemester) {

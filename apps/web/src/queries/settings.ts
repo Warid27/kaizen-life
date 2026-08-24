@@ -1,54 +1,22 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost, apiPut } from '@/lib/api-client';
+import { apiGet, apiPatch } from '@/lib/api-client';
+import type { Settings, UpdateSettingsInput } from '@kaizenlife/shared';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types (server contract — /api/settings now exists; B1) ──────────────────
 
-export interface UserSettings {
-  name: string;
-  email: string;
-  timezone: string;
-  language: string;
-  theme: 'light' | 'dark' | 'system';
-  notifications: {
-    email: boolean;
-    push: boolean;
-    habitReminders: boolean;
-    taskDeadlines: boolean;
-    dailyCheckIn: boolean;
-    weeklyReview: boolean;
-  };
-  habits: {
-    defaultFrequency: string;
-    weekStartsOn: 'monday' | 'sunday';
-    showCompletedHabits: boolean;
-  };
-}
+export type UserSettings = Settings;
 
-export interface Reminder {
-  id: string;
-  type: 'habit' | 'task' | 'checkin' | 'diary' | 'meeting' | 'custom';
+export interface ReminderItem {
+  type: string;
   title: string;
-  description?: string;
-  scheduledAt: string;
-  completedAt?: string;
-  overdue: boolean;
-  href?: string;
+  detail: string;
+  date: string;
+  priority: 'info' | 'warning' | 'urgent';
 }
 
-export interface BackupEntry {
-  id: string;
-  createdAt: string;
-  sizeBytes: number;
-  type: 'manual' | 'scheduled';
+interface ReminderListResponse {
+  data: ReminderItem[];
 }
-
-// ─── Response wrappers ────────────────────────────────────────────────────────
-
-type SettingsResponse = { data: UserSettings };
-type ReminderListResponse = { data: Reminder[] };
-type BackupListResponse = { data: BackupEntry[] };
-type BackupCreateResponse = { data: BackupEntry };
-type ExportResponse = { data: { downloadUrl: string } };
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
 
@@ -62,19 +30,12 @@ export const reminderKeys = {
   list: () => [...reminderKeys.all, 'list'] as const,
 };
 
-export const backupKeys = {
-  all: ['backups'] as const,
-  list: () => [...backupKeys.all, 'list'] as const,
-};
-
 // ─── Settings queries ─────────────────────────────────────────────────────────
 
 export function useUserSettings() {
   return useQuery({
     queryKey: settingsKeys.user(),
-    queryFn: ({ signal }) =>
-      apiGet<SettingsResponse>('/api/settings', undefined, signal),
-    select: (res) => res.data,
+    queryFn: ({ signal }) => apiGet<UserSettings>('/api/settings', undefined, signal),
     staleTime: 5 * 60_000,
   });
 }
@@ -82,10 +43,21 @@ export function useUserSettings() {
 export function useUpdateSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Partial<UserSettings>) =>
-      apiPut<SettingsResponse>('/api/settings', data),
+    mutationFn: (data: UpdateSettingsInput) => apiPatch<UserSettings>('/api/settings', data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: settingsKeys.all });
+    },
+  });
+}
+
+/** Trigger the full-data JSON export download (GET returns an attachment). */
+export function useExportData() {
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      const base =
+        (import.meta.env.PUBLIC_API_URL as string | undefined) || 'http://localhost:3001';
+      // Let the browser handle the Content-Disposition attachment.
+      window.open(`${base}/api/export/json`, '_blank', 'noopener');
     },
   });
 }
@@ -103,71 +75,28 @@ export function useReminders() {
   });
 }
 
-// ─── Backup queries ───────────────────────────────────────────────────────────
-
-export function useBackups() {
-  return useQuery({
-    queryKey: backupKeys.list(),
-    queryFn: ({ signal }) =>
-      apiGet<BackupListResponse>('/api/backups', undefined, signal),
-    select: (res) => res.data,
-    staleTime: 30_000,
-  });
-}
-
-export function useCreateBackup() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => apiPost<BackupCreateResponse>('/api/backups'),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: backupKeys.all });
-    },
-  });
-}
-
-export function useExportData() {
-  return useMutation({
-    mutationFn: () => apiPost<ExportResponse>('/api/export/json'),
-  });
-}
-
-// ─── Local settings (localStorage fallback when no API) ──────────────────────
+// ─── Local settings (localStorage fallback for UI-only prefs) ────────────────
 
 const LOCAL_SETTINGS_KEY = 'kaizenlife-settings';
 
-const defaultSettings: UserSettings = {
-  name: '',
-  email: '',
-  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  language: 'en',
-  theme: 'system',
-  notifications: {
-    email: false,
-    push: true,
-    habitReminders: true,
-    taskDeadlines: true,
-    dailyCheckIn: true,
-    weeklyReview: false,
-  },
-  habits: {
-    defaultFrequency: 'daily',
-    weekStartsOn: 'monday',
-    showCompletedHabits: true,
-  },
-};
+interface LocalPrefs {
+  theme: 'light' | 'dark' | 'system';
+}
 
-export function getLocalSettings(): UserSettings {
-  if (typeof window === 'undefined') return defaultSettings;
+const defaultLocalPrefs: LocalPrefs = { theme: 'system' };
+
+export function getLocalPrefs(): LocalPrefs {
+  if (typeof window === 'undefined') return defaultLocalPrefs;
   try {
     const stored = localStorage.getItem(LOCAL_SETTINGS_KEY);
-    if (stored) return { ...defaultSettings, ...JSON.parse(stored) };
+    if (stored) return { ...defaultLocalPrefs, ...JSON.parse(stored) };
   } catch {
     // fall through
   }
-  return defaultSettings;
+  return defaultLocalPrefs;
 }
 
-export function saveLocalSettings(settings: UserSettings): void {
+export function saveLocalPrefs(prefs: LocalPrefs): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(settings));
+  localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify({ ...getLocalPrefs(), ...prefs }));
 }

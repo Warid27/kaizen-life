@@ -1,0 +1,5 @@
+# Local dev secrets for `wrangler dev` — never commit the real file (.dev.vars is gitignored).
+# Generate a fresh pair: see scripts note in specs, or any WebCrypto ECDH P-256 generator.
+VAPID_PUBLIC_KEY=BPwBBRO3Qzs8BYo76xW-ylp0G4DxGExca9PJmwL8SPY_t2Y5FmCrGnhgPqn48kRuyzx6c7WLD5eVaG3XRYlyS1g
+VAPID_PRIVATE_KEY=k2eih3FuLCOVd63Eh8ClI8pBdLSJvx8wUR7WrEXbFd8
+VAPID_SUBJECT=mailto:kaizenlife@warid.web.id

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, asc, sql } from "drizzle-orm";
+import { eq, and, asc, inArray, isNull } from "drizzle-orm";
 import type { Bindings, AppDb } from "../db/client";
 import { habits, habitLogs } from "../db/schema";
 import {
@@ -11,40 +11,50 @@ import {
 import {
   ensureTodayLogs,
   computeHabitStats,
+  isScheduledOnDate,
 } from "../services/habit-recurrence";
+import { parseDate } from "../services/habit-recurrence";
+import { apiError, notFound } from "../lib/api";
+import { getTodayForUser } from "../lib/date";
 
-const habitsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
+type RouteEnv = { Bindings: Bindings; Variables: { db: AppDb; userId: string } };
 
-// Temporary: single-user mode (no auth yet)
-const DEFAULT_USER_ID = "default-user";
+const habitsRouter = new Hono<RouteEnv>();
 
-// ─── Helper: today's date as YYYY-MM-DD ─────────────────────────────────────
-function todayStr(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+/** First Zod issue → unified validation envelope. */
+function zodFail(
+  c: { json: (body: unknown, status?: number) => Response },
+  error: { issues: { message: string; path: (string | number | symbol)[] }[] },
+): Response {
+  const first = error.issues[0];
+  if (!first) return apiError(c as never, 400, "VALIDATION_ERROR", "Validation failed");
+  return c.json(
+    {
+      error: {
+        code: "VALIDATION_ERROR",
+        message: first.message,
+        details: { field: first.path.join(".") },
+      },
+    },
+    400,
+  );
 }
 
 // ─── GET /habits ────────────────────────────────────────────────────────────
-// List all habits for the user. Also triggers recurrence engine to ensure
-// today's habit_log rows exist for all scheduled active habits.
+// List all habits for the user with today's log state joined in (BL5: the UI
+// could never show completion because log fields were missing). Recurrence
+// materialization is batched (constant query count) and timezone-aware (BL1).
 habitsRouter.get("/habits", async (c) => {
   try {
     const db = c.get("db");
-    // Parse optional query filters
+    const userId = c.get("userId");
     const queryResult = HabitFilterSchema.safeParse(c.req.query());
     const filters = queryResult.success ? queryResult.data : {};
 
-    // Trigger recurrence: ensure today's logs exist
-    await ensureTodayLogs(db, DEFAULT_USER_ID, todayStr());
+    const today = await getTodayForUser(db, userId);
+    await ensureTodayLogs(db, userId, today);
 
-    // Build query conditions
-    const conditions = [
-      eq(habits.userId, DEFAULT_USER_ID),
-      sql`${habits.deletedAt} IS NULL`,
-    ];
+    const conditions = [eq(habits.userId, userId), isNull(habits.deletedAt)];
     if (filters.active !== undefined) {
       conditions.push(eq(habits.active, filters.active));
     }
@@ -59,36 +69,45 @@ habitsRouter.get("/habits", async (c) => {
       .orderBy(asc(habits.sortOrder))
       .all();
 
-    return c.json({ data: rows });
+    // Join today's logs so clients can render completion without a second
+    // request per habit.
+    const habitIds = rows.map((h) => h.id);
+    const todaysLogs =
+      habitIds.length > 0
+        ? await db
+            .select()
+            .from(habitLogs)
+            .where(and(eq(habitLogs.date, today), inArray(habitLogs.habitId, habitIds)))
+        : [];
+    const logByHabitId = new Map(todaysLogs.map((l) => [l.habitId, l]));
+
+    const data = rows.map((habit) => {
+      const log = logByHabitId.get(habit.id) ?? null;
+      const scheduledToday = isScheduledOnDate(habit, parseDate(today));
+      return {
+        ...habit,
+        scheduledToday,
+        completedToday: log != null && log.completedCount >= log.targetCount,
+        progress: log ? { completedCount: log.completedCount, targetCount: log.targetCount } : null,
+      };
+    });
+
+    return c.json({ data });
   } catch (err) {
     console.error("GET /habits error:", err);
-    return c.json(
-      { error: { code: "INTERNAL", message: "Failed to fetch habits" } },
-      500,
-    );
+    return apiError(c, 500, "INTERNAL", "Failed to fetch habits");
   }
 });
 
 // ─── POST /habits ───────────────────────────────────────────────────────────
-// Create a new habit.
 habitsRouter.post("/habits", async (c) => {
   try {
     const db = c.get("db");
-    const body = await c.req.json();
-    const parsed = CreateHabitSchema.safeParse(body);
+    const userId = c.get("userId");
+    const parsed = CreateHabitSchema.safeParse(await c.req.json());
 
     if (!parsed.success) {
-      const firstError = parsed.error.issues[0];
-      return c.json(
-        {
-          error: {
-            code: "VALIDATION",
-            message: firstError.message,
-            field: firstError.path.join("."),
-          },
-        },
-        400,
-      );
+      return zodFail(c, parsed.error);
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -99,7 +118,7 @@ habitsRouter.post("/habits", async (c) => {
       .insert(habits)
       .values({
         id,
-        userId: DEFAULT_USER_ID,
+        userId,
         name: data.name,
         icon: data.icon ?? null,
         category: data.category ?? null,
@@ -117,10 +136,7 @@ habitsRouter.post("/habits", async (c) => {
     return c.json({ data: row }, 201);
   } catch (err) {
     console.error("POST /habits error:", err);
-    return c.json(
-      { error: { code: "INTERNAL", message: "Failed to create habit" } },
-      500,
-    );
+    return apiError(c, 500, "INTERNAL", "Failed to create habit");
   }
 });
 
@@ -128,86 +144,51 @@ habitsRouter.post("/habits", async (c) => {
 habitsRouter.get("/habits/:id", async (c) => {
   try {
     const db = c.get("db");
-    const id = c.req.param("id");
+    const userId = c.get("userId");
+    const id = String(c.req.param("id"));
 
     const row = await db
       .select()
       .from(habits)
-      .where(
-        and(
-          eq(habits.id, id),
-          eq(habits.userId, DEFAULT_USER_ID),
-          sql`${habits.deletedAt} IS NULL`,
-        ),
-      )
+      .where(and(eq(habits.id, id), eq(habits.userId, userId), isNull(habits.deletedAt)))
       .get();
 
     if (!row) {
-      return c.json(
-        { error: { code: "NOT_FOUND", message: "Habit not found" } },
-        404,
-      );
+      return notFound(c, "Habit");
     }
 
     return c.json({ data: row });
   } catch (err) {
     console.error("GET /habits/:id error:", err);
-    return c.json(
-      { error: { code: "INTERNAL", message: "Failed to fetch habit" } },
-      500,
-    );
+    return apiError(c, 500, "INTERNAL", "Failed to fetch habit");
   }
 });
 
 // ─── PATCH /habits/:id ──────────────────────────────────────────────────────
-// Update a habit (partial update).
 habitsRouter.patch("/habits/:id", async (c) => {
   try {
     const db = c.get("db");
-    const id = c.req.param("id");
-    const body = await c.req.json();
-    const parsed = UpdateHabitSchema.safeParse(body);
+    const userId = c.get("userId");
+    const id = String(c.req.param("id"));
+    const parsed = UpdateHabitSchema.safeParse(await c.req.json());
 
     if (!parsed.success) {
-      const firstError = parsed.error.issues[0];
-      return c.json(
-        {
-          error: {
-            code: "VALIDATION",
-            message: firstError.message,
-            field: firstError.path.join("."),
-          },
-        },
-        400,
-      );
+      return zodFail(c, parsed.error);
     }
 
     const data = parsed.data;
     if (Object.keys(data).length === 0) {
-      return c.json(
-        { error: { code: "VALIDATION", message: "No fields to update" } },
-        400,
-      );
+      return apiError(c, 400, "VALIDATION_ERROR", "No fields to update");
     }
 
-    // Check habit exists
     const existing = await db
-      .select()
+      .select({ id: habits.id })
       .from(habits)
-      .where(
-        and(
-          eq(habits.id, id),
-          eq(habits.userId, DEFAULT_USER_ID),
-          sql`${habits.deletedAt} IS NULL`,
-        ),
-      )
+      .where(and(eq(habits.id, id), eq(habits.userId, userId), isNull(habits.deletedAt)))
       .get();
 
     if (!existing) {
-      return c.json(
-        { error: { code: "NOT_FOUND", message: "Habit not found" } },
-        404,
-      );
+      return notFound(c, "Habit");
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -223,156 +204,112 @@ habitsRouter.patch("/habits/:id", async (c) => {
     if (data.active !== undefined) updates.active = data.active;
     if (data.sortOrder !== undefined) updates.sortOrder = data.sortOrder;
 
+    // Guards kept in the write (B5).
     const row = await db
       .update(habits)
       .set(updates)
-      .where(eq(habits.id, id))
+      .where(and(eq(habits.id, id), eq(habits.userId, userId), isNull(habits.deletedAt)))
       .returning()
       .get();
 
     return c.json({ data: row });
   } catch (err) {
     console.error("PATCH /habits/:id error:", err);
-    return c.json(
-      { error: { code: "INTERNAL", message: "Failed to update habit" } },
-      500,
-    );
+    return apiError(c, 500, "INTERNAL", "Failed to update habit");
   }
 });
 
 // ─── DELETE /habits/:id ─────────────────────────────────────────────────────
-// Soft-delete a habit.
 habitsRouter.delete("/habits/:id", async (c) => {
   try {
     const db = c.get("db");
-    const id = c.req.param("id");
+    const userId = c.get("userId");
+    const id = String(c.req.param("id"));
     const now = Math.floor(Date.now() / 1000);
 
-    const existing = await db
-      .select()
-      .from(habits)
-      .where(
-        and(
-          eq(habits.id, id),
-          eq(habits.userId, DEFAULT_USER_ID),
-          sql`${habits.deletedAt} IS NULL`,
-        ),
-      )
-      .get();
-
-    if (!existing) {
-      return c.json(
-        { error: { code: "NOT_FOUND", message: "Habit not found" } },
-        404,
-      );
-    }
-
-    await db
+    const result = await db
       .update(habits)
       .set({ deletedAt: now, updatedAt: now })
-      .where(eq(habits.id, id))
+      .where(and(eq(habits.id, id), eq(habits.userId, userId), isNull(habits.deletedAt)))
+      .returning({ id: habits.id })
       .run();
+
+    if (!result.success || result.meta.changes === 0) {
+      return notFound(c, "Habit");
+    }
 
     return c.json({ data: { success: true } });
   } catch (err) {
     console.error("DELETE /habits/:id error:", err);
-    return c.json(
-      { error: { code: "INTERNAL", message: "Failed to delete habit" } },
-      500,
-    );
+    return apiError(c, 500, "INTERNAL", "Failed to delete habit");
   }
 });
 
 // ─── POST /habits/:id/log ───────────────────────────────────────────────────
-// Log completion for a habit. Increments completedCount for the given date.
-// If no log row exists for the date, creates one.
+// Increment (+n) or decrement (-n) completion for a date.
+// Fixes: cap against the habit's CURRENT target (was frozen log snapshot),
+// soft-deleted log resurrection instead of UNIQUE-violation 500 (DB3),
+// decrement support for undo (BL6).
 habitsRouter.post("/habits/:id/log", async (c) => {
   try {
     const db = c.get("db");
-    const habitId = c.req.param("id");
-    const body = await c.req.json();
-    const parsed = LogHabitSchema.safeParse(body);
+    const userId = c.get("userId");
+    const habitId = String(c.req.param("id"));
+    const parsed = LogHabitSchema.safeParse(await c.req.json());
 
     if (!parsed.success) {
-      const firstError = parsed.error.issues[0];
-      return c.json(
-        {
-          error: {
-            code: "VALIDATION",
-            message: firstError.message,
-            field: firstError.path.join("."),
-          },
-        },
-        400,
-      );
+      return zodFail(c, parsed.error);
     }
 
     const { date, increment, note } = parsed.data;
 
-    // Verify habit exists and belongs to user
     const habit = await db
       .select()
       .from(habits)
-      .where(
-        and(
-          eq(habits.id, habitId),
-          eq(habits.userId, DEFAULT_USER_ID),
-          sql`${habits.deletedAt} IS NULL`,
-        ),
-      )
+      .where(and(eq(habits.id, habitId), eq(habits.userId, userId), isNull(habits.deletedAt)))
       .get();
 
     if (!habit) {
-      return c.json(
-        { error: { code: "NOT_FOUND", message: "Habit not found" } },
-        404,
-      );
+      return notFound(c, "Habit");
     }
 
     const now = Math.floor(Date.now() / 1000);
 
-    // Check for existing log row on this date
+    // Fetch ANY row for this (habit, date) — including soft-deleted ones —
+    // so we can resurrect it rather than collide with the unique index.
     const existing = await db
       .select()
       .from(habitLogs)
-      .where(
-        and(
-          eq(habitLogs.habitId, habitId),
-          eq(habitLogs.date, date),
-          sql`${habitLogs.deletedAt} IS NULL`,
-        ),
-      )
+      .where(and(eq(habitLogs.habitId, habitId), eq(habitLogs.date, date)))
       .get();
 
     let row: typeof habitLogs.$inferSelect;
 
     if (existing) {
-      // Increment completedCount (cap at targetCount)
-      const newCount = Math.min(
-        existing.completedCount + increment,
-        existing.targetCount,
-      );
+      const baseTarget = habit.targetCountPerPeriod;
+      const rawCount = existing.completedCount + increment;
+      // Clamp to [0, current target]; the current target governs the cap,
+      // not the frozen per-row snapshot taken when the log was created.
+      const newCount = Math.max(0, Math.min(rawCount, baseTarget));
 
       row = await db
         .update(habitLogs)
         .set({
           completedCount: newCount,
+          deletedAt: null,
           note: note ?? existing.note,
           updatedAt: now,
         })
         .where(eq(habitLogs.id, existing.id))
         .returning()
         .get();
-    } else {
-      // Create new log row
-      const id = crypto.randomUUID();
+    } else if (increment > 0) {
       const initialCount = Math.min(increment, habit.targetCountPerPeriod);
-
       row = await db
         .insert(habitLogs)
         .values({
-          id,
-          userId: DEFAULT_USER_ID,
+          id: crypto.randomUUID(),
+          userId,
           habitId,
           date,
           completedCount: initialCount,
@@ -383,41 +320,76 @@ habitsRouter.post("/habits/:id/log", async (c) => {
         })
         .returning()
         .get();
+    } else {
+      // Decrement with no existing row → nothing to undo; report the empty
+      // state explicitly instead of creating a zero row.
+      return apiError(c, 404, "NOT_FOUND", `No log entry for ${date} to undo`);
     }
 
     return c.json({ data: row });
   } catch (err) {
     console.error("POST /habits/:id/log error:", err);
-    return c.json(
-      { error: { code: "INTERNAL", message: "Failed to log habit" } },
-      500,
-    );
+    return apiError(c, 500, "INTERNAL", "Failed to log habit");
+  }
+});
+
+// ─── DELETE /habits/:id/logs/:date ──────────────────────────────────────────
+// Undo a check-in for a specific date (BL6): soft-delete that day's log.
+habitsRouter.delete("/habits/:id/logs/:date", async (c) => {
+  try {
+    const db = c.get("db");
+    const userId = c.get("userId");
+    const habitId = String(c.req.param("id"));
+    const date = String(c.req.param("date"));
+    const now = Math.floor(Date.now() / 1000);
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return apiError(c, 400, "VALIDATION_ERROR", "Date must be YYYY-MM-DD");
+    }
+
+    const result = await db
+      .update(habitLogs)
+      .set({ deletedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(habitLogs.habitId, habitId),
+          eq(habitLogs.userId, userId),
+          eq(habitLogs.date, date),
+          isNull(habitLogs.deletedAt),
+        ),
+      )
+      .returning({ id: habitLogs.id })
+      .run();
+
+    if (!result.success || result.meta.changes === 0) {
+      return notFound(c, "Log entry");
+    }
+
+    return c.json({ data: { success: true } });
+  } catch (err) {
+    console.error("DELETE /habits/:id/logs/:date error:", err);
+    return apiError(c, 500, "INTERNAL", "Failed to undo check-in");
   }
 });
 
 // ─── GET /habits/:id/stats ──────────────────────────────────────────────────
-// Compute streak, completion rate, and totals for a habit.
 habitsRouter.get("/habits/:id/stats", async (c) => {
   try {
     const db = c.get("db");
-    const habitId = c.req.param("id");
+    const userId = c.get("userId");
+    const habitId = String(c.req.param("id"));
 
-    const stats = await computeHabitStats(db, habitId, DEFAULT_USER_ID);
+    const today = await getTodayForUser(db, userId);
+    const stats = await computeHabitStats(db, habitId, userId, today);
 
     if (!stats) {
-      return c.json(
-        { error: { code: "NOT_FOUND", message: "Habit not found" } },
-        404,
-      );
+      return notFound(c, "Habit");
     }
 
     return c.json({ data: stats });
   } catch (err) {
     console.error("GET /habits/:id/stats error:", err);
-    return c.json(
-      { error: { code: "INTERNAL", message: "Failed to compute habit stats" } },
-      500,
-    );
+    return apiError(c, 500, "INTERNAL", "Failed to compute habit stats");
   }
 });
 

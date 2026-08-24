@@ -11,9 +11,23 @@ import type {
 
 // ─── API response wrappers (habits API wraps in { data: ... }) ────────────────
 
-type HabitListResponse = { data: Habit[] };
+/** Habit row enriched with today's log state (BL5 — UI can now show completion). */
+export interface HabitWithToday extends Habit {
+  scheduledToday: boolean;
+  completedToday: boolean;
+  progress: { completedCount: number; targetCount: number } | null;
+}
+
+type HabitListResponse = { data: HabitWithToday[] };
 type HabitSingleResponse = { data: Habit };
-type HabitLogResponse = { data: unknown };
+export type HabitLogRow = {
+  id: string;
+  habitId: string;
+  date: string;
+  completedCount: number;
+  targetCount: number;
+};
+type HabitLogResponse = { data: HabitLogRow };
 type HabitStatsResponse = { data: HabitStats };
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
@@ -108,12 +122,27 @@ export function useDeleteHabit() {
   });
 }
 
-/** Log a habit completion for a specific date */
+/** Log a habit completion for a specific date (increment may be negative to undo) */
 export function useLogHabit() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ habitId, data }: { habitId: string; data: LogHabit }) =>
       apiPost<HabitLogResponse>(`/api/habits/${habitId}/log`, data),
+    onSuccess: (_result, variables) => {
+      qc.invalidateQueries({ queryKey: habitKeys.detail(variables.habitId) });
+      qc.invalidateQueries({ queryKey: habitKeys.lists() });
+      qc.invalidateQueries({ queryKey: habitKeys.stats(variables.habitId) });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+/** Undo a check-in for a specific date (DELETE /habits/:id/logs/:date — BL6). */
+export function useUndoHabitLog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ habitId, date }: { habitId: string; date: string }) =>
+      apiDelete<{ data: { success: boolean } }>(`/api/habits/${habitId}/logs/${date}`),
     onSuccess: (_result, variables) => {
       qc.invalidateQueries({ queryKey: habitKeys.detail(variables.habitId) });
       qc.invalidateQueries({ queryKey: habitKeys.lists() });

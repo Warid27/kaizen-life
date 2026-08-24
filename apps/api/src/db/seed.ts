@@ -43,11 +43,12 @@ const dateStr = (offsetDays: number): string =>
     .toISOString()
     .slice(0, 10);
 
-/** Epoch ms untuk `offsetDays` dari hari ini pada jam tertentu (waktu lokal mesin). */
-const epochMs = (offsetDays: number, hour = 8, minute = 0): number => {
+/** Epoch detik untuk `offsetDays` dari hari ini pada jam tertentu (waktu lokal mesin).
+ * Satuan harus DETIK — sama dengan yang ditulis route API (Math.floor(Date.now()/1000)). */
+const epochSec = (offsetDays: number, hour = 8, minute = 0): number => {
   const d = new Date(NOW.getTime() + offsetDays * DAY_MS);
   d.setHours(hour, minute, 0, 0);
-  return d.getTime();
+  return Math.floor(d.getTime() / 1000);
 };
 
 const uuid = (): string => crypto.randomUUID();
@@ -121,8 +122,8 @@ T.users.push([
   USER_NAME,
   USER_EMAIL,
   "Asia/Jakarta",
-  epochMs(-240),
-  epochMs(0, 7),
+  epochSec(-240),
+  epochSec(0, 7),
   null,
 ]);
 
@@ -130,12 +131,12 @@ T.users.push([
 T.semesters.push([
   semesterId, USER_ID, semesterLabel,
   toISO(curStart), toISO(curEnd),
-  epochMs(-120), epochMs(0), null,
+  epochSec(-120), epochSec(0), null,
 ]);
 T.semesters.push([
   prevSemesterId, USER_ID, prevLabel,
   toISO(prevStart), toISO(prevEnd),
-  epochMs(-240), epochMs(-120), null,
+  epochSec(-240), epochSec(-120), null,
 ]);
 
 function toISO(d: Date): string {
@@ -143,13 +144,14 @@ function toISO(d: Date): string {
 }
 
 // ─── Courses ─────────────────────────────────────────────────────────────────
-const courses = [
+const courseDefs: [name: string, code: string, lecturer: string, room: string, color: string][] = [
   ["Pemrograman Web Lanjut", "IF2123", "Budi Santoso, S.Kom., M.Kom.", "Lab Komputer 2", "#3b82f6"],
   ["Basis Data", "IF2111", "Sari Dewi, S.T., M.T.", "Ruang 301", "#22c55e"],
   ["Struktur Data & Algoritma", "IF2024", "Agus Salim, S.Kom., M.T.", "Ruang 204", "#f59e0b"],
   ["Jaringan Komputer", "IF3031", "Rina Marlina, S.T., M.Eng.", "Lab Jaringan 1", "#ef4444"],
   ["Manajemen Proyek TI", "IF3042", "Dedi Kurniawan, S.Kom., M.M.", "Ruang 402", "#8b5cf6"],
-].map(([name, code, lecturer, room, color]) => ({
+];
+const courses = courseDefs.map(([name, code, lecturer, room, color]) => ({
   id: uuid(),
   name,
   code,
@@ -161,23 +163,26 @@ const courses = [
 for (const c of courses) {
   T.courses.push([
     c.id, USER_ID, semesterId, c.name, c.code, c.lecturer, c.room, c.color,
-    epochMs(-120), epochMs(0), null,
+    epochSec(-120), epochSec(0), null,
   ]);
 }
 
 // ─── Course Schedule (Senin=1 … Jumat=5) ────────────────────────────────────
-const schedule = [
-  [courses[0], 1, "08:00", "09:40"],
-  [courses[1], 2, "10:00", "11:40"],
-  [courses[2], 3, "13:00", "14:40"],
-  [courses[3], 4, "09:00", "10:40"],
-  [courses[4], 5, "15:00", "16:40"],
-  [courses[1], 5, "13:00", "14:40"], // praktikum Basis Data
+// [courseIdx, day_of_week, start_time, end_time]
+const scheduleDefs: [courseIdx: number, dayOfWeek: number, start: string, end: string][] = [
+  [0, 1, "08:00", "09:40"],
+  [1, 2, "10:00", "11:40"],
+  [2, 3, "13:00", "14:40"],
+  [3, 4, "09:00", "10:40"],
+  [4, 5, "15:00", "16:40"],
+  [1, 5, "13:00", "14:40"], // praktikum Basis Data
 ];
-for (const [course, dow, start, end] of schedule) {
+for (const [courseIdx, dow, start, end] of scheduleDefs) {
+  const course = courses[courseIdx];
+  if (!course) continue;
   T.courseSchedule.push([
     uuid(), USER_ID, course.id, dow, start, end, course.room,
-    epochMs(-120), epochMs(0), null,
+    epochSec(-120), epochSec(0), null,
   ]);
 }
 
@@ -200,14 +205,16 @@ const assignments = [
 const assignmentRows: { id: string; row: Row }[] = [];
 for (const [ci, title, desc, dueOffset, status, grade] of assignments) {
   const submitted = status === "submitted";
+  const course = courses[ci];
+  if (!course) continue;
   const id = uuid();
   assignmentRows.push({
     id,
     row: [
-      id, USER_ID, courses[ci].id, title, desc, dateStr(dueOffset), "medium",
+      id, USER_ID, course.id, title, desc, dateStr(dueOffset), "medium",
       status, grade,
-      submitted ? epochMs(dueOffset - 1) : epochMs(-20),
-      submitted ? epochMs(-1) : epochMs(0),
+      submitted ? epochSec(dueOffset - 1) : epochSec(-20),
+      submitted ? epochSec(-1) : epochSec(0),
       null,
     ],
   });
@@ -216,18 +223,19 @@ for (const { row } of assignmentRows) T.assignments.push(row);
 
 // ─── Semester Events ─────────────────────────────────────────────────────────
 T.semesterEvents.push(
-  [uuid(), USER_ID, semesterId, "UTS " + semesterLabel, toISO(utsDate), "midterm", epochMs(-100), epochMs(0), null],
-  [uuid(), USER_ID, semesterId, "UAS " + semesterLabel, toISO(uasDate), "final", epochMs(-100), epochMs(0), null],
-  [uuid(), USER_ID, semesterId, "Tenggat Pengisian KRS", dateStr(12), "deadline", epochMs(-60), epochMs(0), null],
+  [uuid(), USER_ID, semesterId, "UTS " + semesterLabel, toISO(utsDate), "midterm", epochSec(-100), epochSec(0), null],
+  [uuid(), USER_ID, semesterId, "UAS " + semesterLabel, toISO(uasDate), "final", epochSec(-100), epochSec(0), null],
+  [uuid(), USER_ID, semesterId, "Tenggat Pengisian KRS", dateStr(12), "deadline", epochSec(-60), epochSec(0), null],
 );
 
 // ─── Team Members ────────────────────────────────────────────────────────────
-const teamMembers = [
+const teamMemberDefs: [name: string, role: string][] = [
   ["Andi Wijaya", "Frontend Developer"],
   ["Siti Rahayu", "UI/UX Designer"],
   ["Rizky Pratama", "Backend Developer"],
   ["Dewi Lestari", "Project Manager"],
-].map(([name, role]) => ({
+];
+const teamMembers = teamMemberDefs.map(([name, role]) => ({
   id: uuid(),
   name,
   role,
@@ -236,16 +244,17 @@ const teamMembers = [
 for (const m of teamMembers) {
   T.teamMembers.push([
     m.id, USER_ID, m.name, m.role, 1,
-    epochMs(-200), epochMs(0), null,
+    epochSec(-200), epochSec(0), null,
   ]);
 }
 
 // ─── Clients ─────────────────────────────────────────────────────────────────
-const clients = [
+const clientDefs: [name: string, company: string, contact: string, notes: string][] = [
   ["PT Nusantara Digital", "Perusahaan", "0812-3456-7890 (Pak Hendra)", "Klien utama untuk proyek web; pembayaran termin 50/50."],
   ["Kopi Senja Coffee Shop", "F&B", "0821-9876-5432 (Mbak Rina, owner)", "Butuh aplikasi kasir sederhana; sudah trial manual 1 bulan."],
   ["Mekar Florist", "Retail", "0857-1111-2222 (Ibu Yanti)", "Rujukan dari klien lama; anggaran terbatas, prioritas POS sederhana."],
-].map(([name, company, contact, notes]) => ({
+];
+const clients = clientDefs.map(([name, company, contact, notes]) => ({
   id: uuid(),
   name,
   company,
@@ -256,53 +265,68 @@ const clients = [
 for (const c of clients) {
   T.clients.push([
     c.id, USER_ID, c.name, c.company, c.contact, c.notes,
-    epochMs(-180), epochMs(0), null,
+    epochSec(-180), epochSec(0), null,
   ]);
 }
 
 // ─── Projects ────────────────────────────────────────────────────────────────
-const projects = [
-  // [nama, clientIdx|null, status, priority, deadlineOffset, progress, pic, deskripsi]
+// [nama, clientIdx|null, status, priority, deadlineOffset, progress, pic, deskripsi]
+const projectDefs: [
+  name: string, clientIdx: number | null, status: string, priority: string,
+  deadlineOffset: number, progress: number, pic: string | null, desc: string,
+][] = [
   ["Website Company Profile PT Nusantara Digital", 0, "active", "high", 21, 65, "Rizky Pratama", "Website 5 halaman dengan CMS sederhana, desain modern, dan optimasi SEO."],
   ["Aplikasi Kasir Kopi Senja", 1, "active", "urgent", 14, 40, "Andi Wijaya", "Aplikasi kasir berbasis web dengan manajemen menu, stok, dan laporan harian."],
   ["Sistem POS Mekar Florist", 2, "planning", "medium", 45, 0, "Rizky Pratama", "POS ringan untuk pencatatan penjualan dan stok bunga; diskusi scope belum final."],
   ["Portofolio Pribadi 2026", null, "completed", "medium", -20, 100, null, "Redesign portofolio pribadi dengan Astro; sudah live di warid.web.id."],
-].map(([name, ci, status, priority, deadlineOffset, progress, pic, desc]) => ({
-  id: uuid(),
-  name,
-  clientId: ci === null ? null : clients[ci as number].id,
-  status,
-  priority,
-  deadline: deadlineOffset === null ? null : dateStr(deadlineOffset as number),
-  progress,
-  pic,
-  desc,
-}));
+];
+const projects = projectDefs.map(([name, ci, status, priority, deadlineOffset, progress, pic, desc]) => {
+  const client = ci === null ? undefined : clients[ci];
+  return {
+    id: uuid(),
+    name,
+    clientId: client?.id ?? null,
+    status,
+    priority,
+    deadline: dateStr(deadlineOffset),
+    progress,
+    pic,
+    desc,
+  };
+});
 
 for (const p of projects) {
   T.projects.push([
     p.id, USER_ID, p.name, p.clientId, p.status, p.priority,
     p.deadline, p.progress, p.pic, p.desc,
-    epochMs(-150), epochMs(0), null,
+    epochSec(-150), epochSec(0), null,
   ]);
 }
 
 // ─── Client Follow-ups ───────────────────────────────────────────────────────
-const followups = [
-  [clients[0], -1, 3, "pending", "Kirim draft kontrak termin kedua."],
-  [clients[1], -6, 7, "pending", "Jadwalkan demo aplikasi kasir."],
-  [clients[2], -14, -7, "done", "Diskusi awal kebutuhan POS; sudah ditindaklanjuti via WA."],
+// [clientIdx, lastContactOffset, nextFollowupOffset, status, notes]
+const followups: [clientIdx: number, lastOffset: number, nextOffset: number, status: string, notes: string][] = [
+  [0, -1, 3, "pending", "Kirim draft kontrak termin kedua."],
+  [1, -6, 7, "pending", "Jadwalkan demo aplikasi kasir."],
+  [2, -14, -7, "done", "Diskusi awal kebutuhan POS; sudah ditindaklanjuti via WA."],
 ];
-for (const [client, lastOffset, nextOffset, status, notes] of followups) {
+for (const [clientIdx, lastOffset, nextOffset, status, notes] of followups) {
+  const client = clients[clientIdx];
+  if (!client) continue;
   T.clientFollowups.push([
     uuid(), USER_ID, client.id, dateStr(lastOffset), dateStr(nextOffset), status, notes,
-    epochMs(-60), epochMs(0), null,
+    epochSec(-60), epochSec(0), null,
   ]);
 }
 
 // ─── Tasks ───────────────────────────────────────────────────────────────────
-const tasks = [
-  // [judul, deskripsi, dateOffset, start, end, durMin, priority, status, projectIdx|null, courseIdx|null, tags]
+// [judul, deskripsi, dateOffset, start, end, durMin, priority, status, projectIdx|null, courseIdx|null, tags]
+const taskDefs: [
+  title: string, desc: string, dateOffset: number,
+  start: string | null, end: string | null, durationMin: number,
+  priority: string, status: string,
+  projectIdx: number | null, courseIdx: number | null, tags: string,
+][] = [
   ["Selesaikan laporan keuangan klien Kopi Senja", "Rekap pemasukan-pengeluaran bulan lalu untuk laporan ke owner.", 0, "09:00", "11:00", 120, "high", "in_progress", 1, null, '["kerja","finansial"]'],
   ["Revisi proposal website Nusantara Digital", "Perbaiki bagian portofolio dan tambah testimoni sesuai masukan klien.", 0, "13:00", "15:00", 120, "high", "todo", 0, null, '["kerja"]'],
   ["Belajar Bab 5: Normalisasi Database", "Baca modul + kerjakan latihan soal 1-10.", 0, "19:00", "20:30", 90, "medium", "todo", null, 1, '["kuliah","basa-data"]'],
@@ -319,22 +343,27 @@ const tasks = [
   ["Perbaiki bug halaman login", "Fix validasi email + handling error dari API.", -2, "13:00", "16:00", 180, "urgent", "done", 1, null, '["kerja","bug"]'],
   ["Beres-beres kamar", "Rapikan meja kerja dan lemari.", -1, null, null, 60, "low", "done", null, null, '["rumah"]'],
 ];
-for (const [title, desc, dOffset, start, end, dur, priority, status, pIdx, cIdx, tags] of tasks) {
+for (const [title, desc, dOffset, start, end, dur, priority, status, pIdx, cIdx, tags] of taskDefs) {
   const done = status === "done";
+  const project = pIdx === null ? undefined : projects[pIdx];
+  const course = cIdx === null ? undefined : courses[cIdx];
   T.tasks.push([
     uuid(), USER_ID, title, desc,
     dateStr(dOffset), start, end, dur, priority, status,
-    pIdx === null ? null : projects[pIdx as number].id,
-    cIdx === null ? null : courses[cIdx as number].id,
+    project?.id ?? null,
+    course?.id ?? null,
     tags,
-    done ? epochMs(dOffset, 20) : null,
-    epochMs(Math.min(dOffset, -10)), epochMs(done ? dOffset : 0), null,
+    done ? epochSec(dOffset, 20) : null,
+    epochSec(Math.min(dOffset, -10)), epochSec(done ? dOffset : 0), null,
   ]);
 }
 
 // ─── Habits ──────────────────────────────────────────────────────────────────
-const habits = [
-  // [nama, icon, kategori, frequency, target, customDays, rateKehadiran]
+// [nama, icon, kategori, frequency, target, customDays, rateKehadiran]
+const habitDefs: [
+  name: string, icon: string, category: string, frequency: string,
+  target: number, customDays: number | null, rate: number,
+][] = [
   ["Olahraga 30 menit", "🏃", "Kesehatan", "daily", 1, null, 0.85],
   ["Membaca buku 20 halaman", "📚", "Pengembangan Diri", "daily", 1, null, 0.75],
   ["Belajar bahasa Inggris", "🇬🇧", "Belajar", "daily", 1, null, 0.7],
@@ -348,22 +377,23 @@ const habits = [
   ["Plank min 60s", "🧘", "Kesehatan", "daily", 1, null, 0.8],
   ["Body squat min 20x", "🦵", "Kesehatan", "daily", 1, null, 0.85],
   ["Wall sit min 40s", "🪑", "Kesehatan", "daily", 1, null, 0.7],
-].map(([name, icon, category, frequency, target, customDays, rate]) => ({
+];
+const habits = habitDefs.map(([name, icon, category, frequency, target, customDays, rate]) => ({
   id: uuid(),
   name,
   icon,
   category,
   frequency,
-  target: target as number,
+  target,
   customDays,
-  rate: rate as number,
+  rate,
 }));
 
 for (const [i, h] of habits.entries()) {
   T.habits.push([
     h.id, USER_ID, h.name, h.icon, h.category, h.frequency, h.target,
     h.customDays, 1, i,
-    epochMs(-90), epochMs(0), null, null,
+    epochSec(-90), epochSec(0), null, null,
   ]);
   for (let d = -59; d <= 0; d++) {
     if (h.frequency === "weekly_n") {
@@ -373,7 +403,7 @@ for (const [i, h] of habits.entries()) {
     if (R() < h.rate) {
       T.habitLogs.push([
         uuid(), USER_ID, h.id, dateStr(d), 1, h.target, null,
-        epochMs(d, 21), epochMs(d, 21), null,
+        epochSec(d, 21), epochSec(d, 21), null,
       ]);
     }
   }
@@ -403,7 +433,7 @@ for (let d = -29; d <= 0; d++) {
     4 + Math.floor(R() * 5), // energi 4-8
     3 + Math.floor(R() * 5), // stres 3-7
     checkinNotes[-d] ?? null,
-    epochMs(d, 21), epochMs(d, 21), null,
+    epochSec(d, 21), epochSec(d, 21), null,
   ]);
 }
 
@@ -425,15 +455,16 @@ const diaries = [
   ["Baca 20 halaman buku Atomic Habits.", "Fokus ke sistem, bukan cuma target.", "Terapkan satu kebiasaan baru minggu ini.", ""],
 ];
 for (let i = 0; i < 14; i++) {
-  const [grateful, lesson, focus, freeText] = diaries[diaries.length - 1 - i] ?? diaries[0];
+  const entry = diaries[diaries.length - 1 - i] ?? diaries[0]!;
+  const [grateful = "", lesson = "", focus = "", freeText = ""] = entry;
   T.diaryEntries.push([
     uuid(), USER_ID, dateStr(i - 13), grateful, lesson, focus, freeText,
-    epochMs(i - 13, 22), epochMs(i - 13, 22), null,
+    epochSec(i - 13, 22), epochSec(i - 13, 22), null,
   ]);
 }
 
 // ─── Standups (5 hari kerja terakhir, 4 anggota tim) ─────────────────────────
-const standupPool = [
+const standupPool: [current: string, target: string, result: string, blocker: string | null, status: string][] = [
   ["Mengerjakan halaman login & register", "Selesaikan validasi form", "Validasi form selesai, tinggal styling", null, "on_track"],
   ["Revisi desain dashboard", "Finalisasi komponen UI", "Desain dikirim ke klien untuk review", "Menunggu feedback klien", "at_risk"],
   ["Integrasi API pembayaran", "Selesaikan webhook midtrans", "Webhook beres, tes transaksi sukses", null, "on_track"],
@@ -448,17 +479,24 @@ for (let d = -6; d <= 0; d++) {
   if (dow === 0 || dow === 6) continue; // lewati akhir pekan
   for (const [mi, member] of teamMembers.entries()) {
     const poolIdx = (((mi * 3 + d) % standupPool.length) + standupPool.length) % standupPool.length;
-    const [current, target, result, blocker, status] = standupPool[poolIdx];
+    const [current, target, result, blocker, status] = standupPool[poolIdx]!;
     T.standups.push([
-      uuid(), USER_ID, member.id, projects[Math.abs(d) % projects.length].id,
+      uuid(), USER_ID, member.id,
+      projects[Math.abs(d) % projects.length]!.id,
       dateStr(d), current, target, result, blocker, status,
-      epochMs(d, 9), epochMs(d, 9), null,
+      epochSec(d, 9), epochSec(d, 9), null,
     ]);
   }
 }
 
 // ─── Meetings + Action Items ─────────────────────────────────────────────────
-const meetingDefs = [
+type MeetingActionDef = [desc: string, pic: string, deadlineOffset: number, status: string];
+const meetingDefs: {
+  dateOffset: number;
+  agenda: string;
+  decisions: string;
+  actions: MeetingActionDef[];
+}[] = [
   {
     dateOffset: -9,
     agenda: "Kick-off proyek website PT Nusantara Digital",
@@ -493,21 +531,23 @@ for (const [mi, m] of meetingDefs.entries()) {
   meetingRows.push({
     id: meetingId,
     row: [
-      meetingId, USER_ID, m.dateOffset >= 0 ? null : projects[0].id,
+      meetingId, USER_ID, m.dateOffset >= 0 ? null : projects[0]!.id,
       dateStr(m.dateOffset), m.agenda, m.decisions,
-      epochMs(m.dateOffset, 15), epochMs(m.dateOffset, 15), null,
+      epochSec(m.dateOffset, 15), epochSec(m.dateOffset, 15), null,
     ],
   });
   for (const [desc, pic, deadlineOffset, status] of m.actions) {
     T.meetingActionItems.push([
       uuid(), USER_ID, meetingId, desc, pic, dateStr(deadlineOffset), status,
-      epochMs(m.dateOffset, 15), epochMs(0), null,
+      epochSec(m.dateOffset, 15), epochSec(0), null,
     ]);
   }
 }
 for (const { row } of meetingRows) T.meetings.push(row);
 
-// ─── Transactions (60 hari terakhir, nominal Rupiah × 100) ───────────────────
+// ─── Transactions (60 hari terakhir) ─────────────────────────────────────────
+// Nilai pada txDefs adalah Rupiah utuh; kolom amount_cents menyimpan minor unit
+// (Rupiah × 100) agar konsisten dengan formatCents() yang membagi 100 saat render.
 const txDefs: [number, "income" | "expense", number, string, "cash" | "bank", string | null][] = [
   [-58, "income", 4_500_000, "Gaji freelance bulanan", "bank", "Transfer dari PT Nusantara Digital"],
   [-55, "expense", 1_200_000, "Kos bulanan", "bank", "Transfer ke pemilik kos"],
@@ -532,10 +572,10 @@ const txDefs: [number, "income" | "expense", number, string, "cash" | "bank", st
   [-1, "expense", 130_000, "Kebutuhan kos", "cash", "Belanja beras, minyak, telur"],
   [0, "expense", 10_000, "Transportasi", "cash", "Parkir kampus"],
 ];
-for (const [dOffset, type, amountCents, category, account, note] of txDefs) {
+for (const [dOffset, type, amountRupiah, category, account, note] of txDefs) {
   T.transactions.push([
-    uuid(), USER_ID, dateStr(dOffset), type, amountCents, "idr", category, account, note,
-    epochMs(dOffset, 19), epochMs(0), null,
+    uuid(), USER_ID, dateStr(dOffset), type, amountRupiah * 100, "idr", category, account, note,
+    epochSec(dOffset, 19), epochSec(0), null,
   ]);
 }
 
@@ -549,26 +589,26 @@ T.goals.push(
   // Tahunan
   [goalAnnual, USER_ID, "Lulus kuliah tepat waktu dengan IPK minimal 3.5", "annual",
     `${year}-01-01`, `${year}-12-31`, 3.5, 3.42, "IPK", "in_progress", null, null,
-    epochMs(-200), epochMs(0), null],
+    epochSec(-200), epochSec(0), null],
   // Bulanan (anak dari tahunan)
   [goalMonthly, USER_ID, "Menyelesaikan semua tugas kuliah bulan ini", "monthly",
     dateStr(-NOW.getDate() + 1), dateStr(30 - NOW.getDate() + 1), 10, 6, "tugas", "in_progress",
-    goalAnnual, null, epochMs(-20), epochMs(0), null],
+    goalAnnual, null, epochSec(-20), epochSec(0), null],
   [uuid(), USER_ID, "Menabung Rp 1.000.000", "monthly",
     dateStr(-NOW.getDate() + 1), dateStr(30 - NOW.getDate() + 1), 1_000_000, 350_000, "Rupiah", "in_progress",
-    null, null, epochMs(-20), epochMs(0), null],
+    null, null, epochSec(-20), epochSec(0), null],
   // Mingguan (anak dari bulanan)
   [goalWeeklyStudy, USER_ID, "Belajar 5 jam untuk mata kuliah semester ini", "weekly",
     dateStr(-6), dateStr(0), 5, 3, "jam", "in_progress", goalMonthly, null,
-    epochMs(-7), epochMs(0), null],
+    epochSec(-7), epochSec(0), null],
   [goalWeeklyHabit, USER_ID, "Olahraga minimal 4 kali minggu ini", "weekly",
-    dateStr(-6), dateStr(0), 4, 3, "kali", "in_progress", goalMonthly, habits[0].id,
-    epochMs(-7), epochMs(0), null],
+    dateStr(-6), dateStr(0), 4, 3, "kali", "in_progress", goalMonthly, habits[0]!.id,
+    epochSec(-7), epochSec(0), null],
 );
 
 // ─── Monthly Reviews (3 bulan terakhir) ──────────────────────────────────────
-const reviewMonths = [
-  // [offsetBulan, pencapaianTerbesar, pelajaranTerbesar, prioritasBulanDepan]
+// [offsetBulan, pencapaianTerbesar, pelajaranTerbesar, prioritasBulanDepan]
+const reviewMonths: [monthOffset: number, achievement: string, lesson: string, priorities: string][] = [
   [-3, "Menyelesaikan proyek portofolio pribadi dan submit 2 laporan praktikum tepat waktu.",
     "Menunda pekerjaan kecil hanya menumpuk beban di akhir bulan.",
     "Konsisten ngerjain tugas harian; mulai persiapan UTS."],
@@ -583,18 +623,23 @@ for (const [mOffset, achievement, lesson, priorities] of reviewMonths) {
   const d = new Date(NOW.getFullYear(), NOW.getMonth() + mOffset, 15);
   T.monthlyReviews.push([
     uuid(), USER_ID, d.getFullYear(), d.getMonth() + 1, achievement, lesson, priorities, null,
-    epochMs(mOffset * 30, 20), epochMs(0), null,
+    epochSec(mOffset * 30, 20), epochSec(0), null,
   ]);
 }
 
 // ─── Reminders ───────────────────────────────────────────────────────────────
-const upcomingAssignment = assignmentRows.find((a) => a.row[5] > dateStr(0));
-const upcomingMeeting = meetingRows.find((m) => m.row[3] > dateStr(0));
+const today = dateStr(0);
+const upcomingAssignment = assignmentRows.find(
+  (a) => typeof a.row[5] === "string" && a.row[5] > today,
+);
+const upcomingMeeting = meetingRows.find(
+  (m) => typeof m.row[3] === "string" && m.row[3] > today,
+);
 T.reminders.push(
-  [uuid(), USER_ID, "habit", "habit", habits[4].id, epochMs(0, 20, 0), "pending", epochMs(-3), epochMs(0), null],
-  [uuid(), USER_ID, "deadline", "assignment", upcomingAssignment?.id ?? assignmentRows[0].id, epochMs(3, 9, 0), "pending", epochMs(-2), epochMs(0), null],
-  [uuid(), USER_ID, "followup", "client_followup", followups[0][0].id, epochMs(3, 10, 0), "pending", epochMs(-2), epochMs(0), null],
-  [uuid(), USER_ID, "meeting", "meeting", upcomingMeeting?.id ?? meetingRows[0].id, epochMs(1, 8, 30), "pending", epochMs(-1), epochMs(0), null],
+  [uuid(), USER_ID, "habit", "habit", habits[4]!.id, epochSec(0, 20, 0), "pending", epochSec(-3), epochSec(0), null],
+  [uuid(), USER_ID, "deadline", "assignment", upcomingAssignment?.id ?? assignmentRows[0]!.id, epochSec(3, 9, 0), "pending", epochSec(-2), epochSec(0), null],
+  [uuid(), USER_ID, "followup", "client_followup", clients[0]!.id, epochSec(3, 10, 0), "pending", epochSec(-2), epochSec(0), null],
+  [uuid(), USER_ID, "meeting", "meeting", upcomingMeeting?.id ?? meetingRows[0]!.id, epochSec(1, 8, 30), "pending", epochSec(-1), epochSec(0), null],
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

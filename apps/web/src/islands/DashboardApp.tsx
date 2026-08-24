@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { QueryProvider } from '@/lib/query-provider';
 import { useDashboardData } from '@/queries/dashboard';
+import { useLogHabit, useUndoHabitLog } from '@/queries/habits';
+import { todayStr } from '@/stores/ui';
 import { ScheduleCard } from '@/components/dashboard/ScheduleCard';
 import { PrioritiesCard } from '@/components/dashboard/PrioritiesCard';
 import { HabitsCard } from '@/components/dashboard/HabitsCard';
@@ -22,6 +24,8 @@ export default function DashboardApp() {
 function DashboardContent() {
   const [greeting, setGreeting] = useState('');
   const { data, isLoading } = useDashboardData();
+  const logMut = useLogHabit();
+  const undoMut = useUndoHabitLog();
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -29,6 +33,19 @@ function DashboardContent() {
     else if (hour < 17) setGreeting('Good afternoon');
     else setGreeting('Good evening');
   }, []);
+
+  // Working habit toggle (was a dead optional prop): check in when incomplete,
+  // undo today's log when complete. The dashboard payload is for today, so
+  // completedCount >= targetCount is today's done state.
+  const handleToggleHabit = (habitId: string) => {
+    const habit = data?.habits.find((h) => h.id === habitId);
+    if (!habit) return;
+    if (habit.completedCount >= habit.targetCount) {
+      undoMut.mutate({ habitId, date: todayStr() });
+    } else {
+      logMut.mutate({ habitId, data: { date: todayStr(), increment: 1 } });
+    }
+  };
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
@@ -46,7 +63,7 @@ function DashboardContent() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         <ScheduleCard tasks={data?.tasks} isLoading={isLoading} />
         <PrioritiesCard tasks={data?.tasks} isLoading={isLoading} />
-        <HabitsCard habits={data?.habits} isLoading={isLoading} />
+        <HabitsCard habits={data?.habits} isLoading={isLoading} onToggleHabit={handleToggleHabit} />
         <FollowupsCard followups={data?.overdueFollowups} isLoading={isLoading} />
         <DeadlinesCard deadlines={data?.upcomingDeadlines} isLoading={isLoading} />
         <ProjectsCard projects={data?.projects} isLoading={isLoading} />

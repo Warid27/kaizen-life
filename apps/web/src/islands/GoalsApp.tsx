@@ -30,9 +30,17 @@ import { cn } from '@/lib/utils';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function currentMonth(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+/** Percent progress that never yields NaN/Infinity/negative (F5/BL16). */
+function safeGoalPercent(
+  currentValue: number | null | undefined,
+  targetValue: number | null | undefined,
+): number {
+  const target =
+    typeof targetValue === 'number' && Number.isFinite(targetValue) ? targetValue : 0;
+  const current =
+    typeof currentValue === 'number' && Number.isFinite(currentValue) ? currentValue : 0;
+  if (target <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((current / target) * 100)));
 }
 
 const LEVEL_META: Record<
@@ -66,105 +74,7 @@ const STATUS_BADGE: Record<string, { variant: 'default' | 'success' | 'warning' 
   abandoned: { variant: 'secondary' },
 };
 
-// ─── Demo data ────────────────────────────────────────────────────────────────
-
-function generateDemoGoals(): Goal[] {
-  return [
-    // Annual
-    {
-      id: 'a1',
-      title: 'Save $20,000',
-      description: 'Build emergency fund to 6 months expenses',
-      type: 'annual',
-      periodStart: `${new Date().getFullYear()}-01-01`,
-      periodEnd: `${new Date().getFullYear()}-12-31`,
-      targetValue: 20000,
-      currentValue: 8500,
-      unit: 'dollars',
-      status: 'in_progress',
-      parentGoalId: null,
-      linkedHabitId: null,
-      createdAt: `${new Date().getFullYear()}-01-01`,
-    },
-    {
-      id: 'a2',
-      title: 'Ship 3 side projects',
-      description: 'Launch and maintain 3 products',
-      type: 'annual',
-      periodStart: `${new Date().getFullYear()}-01-01`,
-      periodEnd: `${new Date().getFullYear()}-12-31`,
-      targetValue: 3,
-      currentValue: 1,
-      unit: 'projects',
-      status: 'in_progress',
-      parentGoalId: null,
-      linkedHabitId: null,
-      createdAt: `${new Date().getFullYear()}-01-01`,
-    },
-    // Monthly (children of a1)
-    {
-      id: 'm1',
-      title: 'Save $1,667',
-      description: 'Monthly savings target',
-      type: 'monthly',
-      periodStart: `${currentMonth()}-01`,
-      periodEnd: `${currentMonth()}-28`,
-      targetValue: 1667,
-      currentValue: 1450,
-      unit: 'dollars',
-      status: 'in_progress',
-      parentGoalId: 'a1',
-      linkedHabitId: null,
-      createdAt: `${currentMonth()}-01`,
-    },
-    {
-      id: 'm2',
-      title: 'Ship MVP of KaizenLife',
-      description: 'Core features complete',
-      type: 'monthly',
-      periodStart: `${currentMonth()}-01`,
-      periodEnd: `${currentMonth()}-30`,
-      targetValue: 100,
-      currentValue: 65,
-      unit: 'percent',
-      status: 'in_progress',
-      parentGoalId: 'a2',
-      linkedHabitId: null,
-      createdAt: `${currentMonth()}-01`,
-    },
-    // Weekly (children of m1)
-    {
-      id: 'w1',
-      title: 'Save $417',
-      description: 'Weekly savings transfer',
-      type: 'weekly',
-      periodStart: currentMonth(),
-      periodEnd: currentMonth(),
-      targetValue: 417,
-      currentValue: 417,
-      unit: 'dollars',
-      status: 'completed',
-      parentGoalId: 'm1',
-      linkedHabitId: null,
-      createdAt: currentMonth(),
-    },
-    {
-      id: 'w2',
-      title: 'No impulse purchases',
-      description: 'Stick to budget',
-      type: 'weekly',
-      periodStart: currentMonth(),
-      periodEnd: currentMonth(),
-      targetValue: 7,
-      currentValue: 5,
-      unit: 'days',
-      status: 'in_progress',
-      parentGoalId: 'm1',
-      linkedHabitId: null,
-      createdAt: currentMonth(),
-    },
-  ];
-}
+// ─── Hierarchy ────────────────────────────────────────────────────────────────
 
 function buildHierarchy(goals: Goal[]): Goal[] {
   const map = new Map<string, Goal & { children: Goal[] }>();
@@ -200,13 +110,13 @@ function GoalsContent() {
   const [formOpen, setFormOpen] = useState(false);
   const [formLevel, setFormLevel] = useState<GoalLevel>('annual');
   const [parentId, setParentId] = useState<string | undefined>();
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['a1', 'a2']));
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
-  const { data: goals, isLoading } = useGoals();
+  const { data: goals, isLoading, isError } = useGoals();
   const createMut = useCreateGoal();
   const updateMut = useUpdateGoal();
 
-  const goalList = goals ?? generateDemoGoals();
+  const goalList = useMemo(() => goals ?? [], [goals]);
   const hierarchy = useMemo(() => buildHierarchy(goalList), [goalList]);
 
   // Stats
@@ -215,10 +125,8 @@ function GoalsContent() {
   const overallProgress =
     activeGoals.length > 0
       ? Math.round(
-          activeGoals.reduce(
-            (sum, g) => sum + Math.min((g.currentValue / g.targetValue) * 100, 100),
-            0,
-          ) / activeGoals.length,
+          activeGoals.reduce((sum, g) => sum + safeGoalPercent(g.currentValue, g.targetValue), 0) /
+            activeGoals.length,
         )
       : 0;
 
@@ -256,11 +164,13 @@ function GoalsContent() {
   };
 
   const handleProgress = (goal: Goal, newValue: number) => {
+    if (goal.status === 'abandoned') return; // never resurrect abandoned goals (BL17)
+    const target = goal.targetValue ?? newValue;
     updateMut.mutate({
       id: goal.id,
       data: {
         currentValue: newValue,
-        status: newValue >= goal.targetValue ? 'completed' : 'in_progress',
+        status: target > 0 && newValue >= target ? 'completed' : 'in_progress',
       },
     });
   };
@@ -330,6 +240,14 @@ function GoalsContent() {
             </Card>
           ))}
         </div>
+      ) : isError ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12">
+            <p className="text-sm text-destructive">
+              Couldn't load goals. Please try refreshing the page.
+            </p>
+          </CardContent>
+        </Card>
       ) : hierarchy.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
@@ -386,10 +304,11 @@ function GoalNode({
   onProgress,
 }: GoalNodeProps) {
   const meta = LEVEL_META[goal.type];
-  const pct = Math.min(Math.round((goal.currentValue / goal.targetValue) * 100), 100);
+  const pct = safeGoalPercent(goal.currentValue, goal.targetValue);
   const hasChildren = goal.children && goal.children.length > 0;
   const isExpanded = expandedIds.has(goal.id);
   const isCompleted = goal.status === 'completed';
+  const isAbandoned = goal.status === 'abandoned';
 
   const nextLevel: GoalLevel | null =
     goal.type === 'annual' ? 'monthly' : goal.type === 'monthly' ? 'weekly' : null;
@@ -446,11 +365,11 @@ function GoalNode({
                 <p className="mt-0.5 text-xs text-muted-foreground">{goal.description}</p>
               )}
 
-              {/* Progress */}
+              {/* Progress — percentage-based so a zero/absent target can't divide (F5) */}
               <div className="mt-2 flex items-center gap-3">
-                <Progress value={goal.currentValue} max={goal.targetValue} className="h-2 flex-1" />
+                <Progress value={pct} max={100} className="h-2 flex-1" />
                 <span className="text-xs font-medium tabular-nums text-muted-foreground">
-                  {goal.currentValue}/{goal.targetValue} {goal.unit}
+                  {goal.currentValue}/{goal.targetValue ?? '—'} {goal.unit ?? ''}
                 </span>
                 <span
                   className={cn(
@@ -470,15 +389,20 @@ function GoalNode({
               )}
             </div>
 
-            {/* Quick Progress Buttons */}
+            {/* Quick Progress Buttons — disabled for abandoned goals (BL17) */}
             {!isCompleted && (
               <div className="flex gap-1">
                 <Button
                   variant="ghost"
                   size="sm"
                   className="h-7 text-xs"
+                  disabled={isAbandoned}
+                  title={isAbandoned ? 'Abandoned goal' : undefined}
                   onClick={() =>
-                    onProgress(goal, Math.min(goal.currentValue + 1, goal.targetValue))
+                    onProgress(
+                      goal,
+                      Math.min(goal.currentValue + 1, goal.targetValue ?? goal.currentValue + 1),
+                    )
                   }
                 >
                   +1

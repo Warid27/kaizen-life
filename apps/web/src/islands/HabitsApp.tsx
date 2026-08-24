@@ -6,8 +6,11 @@ import {
   useUpdateHabit,
   useDeleteHabit,
   useLogHabit,
+  useUndoHabitLog,
+  useHabitStats,
+  type HabitWithToday,
 } from '@/queries/habits';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,14 +22,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import {
   Check,
   Plus,
-  Flame,
   Pencil,
   Trash2,
-  TrendingUp,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/ui';
-import type { Habit, HabitCategory } from '@kaizenlife/shared';
+import type { Habit } from '@kaizenlife/shared';
+
+type HabitCategory = NonNullable<Habit['category']>;
+type HabitFrequency = Habit['frequency'];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -40,7 +46,7 @@ const CATEGORIES: { value: HabitCategory | ''; label: string }[] = [
 
 const ICON_OPTIONS = ['📖', '🏃', '💧', '🧘', '✍️', '🎯', '💪', '🌅', '🙏', '🎵', '🥗', '😴'];
 
-const FREQUENCY_OPTIONS = [
+const FREQUENCY_OPTIONS: { value: HabitFrequency; label: string }[] = [
   { value: 'daily', label: 'Daily' },
   { value: 'weekly_n', label: 'Weekly (N times)' },
   { value: 'custom_days', label: 'Custom Days' },
@@ -72,12 +78,17 @@ function HabitsContent() {
   const updateMut = useUpdateHabit();
   const deleteMut = useDeleteHabit();
   const logMut = useLogHabit();
+  const undoMut = useUndoHabitLog();
 
-  const handleToggle = (habitId: string) => {
-    logMut.mutate({
-      habitId,
-      data: { date: selectedDate, increment: 1 },
-    });
+  const handleToggle = (habit: HabitWithToday) => {
+    if (habit.completedToday) {
+      undoMut.mutate({ habitId: habit.id, date: selectedDate });
+    } else {
+      logMut.mutate({
+        habitId: habit.id,
+        data: { date: selectedDate, increment: 1 },
+      });
+    }
   };
 
   const handleCreate = () => {
@@ -100,7 +111,7 @@ function HabitsContent() {
     name: string;
     icon: string | null;
     category: HabitCategory | null;
-    frequency: string;
+    frequency: HabitFrequency;
   }) => {
     if (editingHabit) {
       updateMut.mutate(
@@ -115,15 +126,13 @@ function HabitsContent() {
           active: true,
           sortOrder: 0,
           targetCountPerPeriod: 1,
-        } as any,
+        },
         { onSuccess: () => setFormOpen(false) },
       );
     }
   };
 
-  const completed = (habits ?? []).filter(
-    (h) => (h as any).completedCount >= (h as any).targetCount,
-  ).length;
+  const completed = (habits ?? []).filter((h) => h.completedToday).length;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-4 sm:p-6">
@@ -190,15 +199,10 @@ function HabitsContent() {
               onToggle={handleToggle}
               onEdit={handleEdit}
               onDelete={handleDelete}
-              isToggling={logMut.isPending}
+              isToggling={logMut.isPending || undoMut.isPending}
             />
           ))}
         </div>
-      )}
-
-      {/* Monthly Completion Chart */}
-      {(habits ?? []).length > 0 && (
-        <MonthlyChart habits={habits ?? []} />
       )}
 
       {/* Create/Edit Dialog */}
@@ -216,24 +220,24 @@ function HabitsContent() {
 // ─── Habit Item ───────────────────────────────────────────────────────────────
 
 interface HabitItemProps {
-  habit: Habit & { completedCount?: number; targetCount?: number; currentStreak?: number };
-  onToggle: (id: string) => void;
+  habit: HabitWithToday;
+  onToggle: (habit: HabitWithToday) => void;
   onEdit: (habit: Habit) => void;
   onDelete: (id: string) => void;
   isToggling: boolean;
 }
 
 function HabitItem({ habit, onToggle, onEdit, onDelete, isToggling }: HabitItemProps) {
-  const done = (habit as any).completedCount >= (habit as any).targetCount;
-  const streak = (habit as any).currentStreak ?? 0;
+  const [expanded, setExpanded] = useState(false);
+  const done = habit.completedToday;
 
   return (
     <Card className="group transition-colors hover:border-border/80">
       <CardContent className="flex items-center gap-4 p-4">
-        {/* Toggle */}
+        {/* Toggle — click checks in OR undoes today's log (BL6) */}
         <button
           type="button"
-          onClick={() => onToggle(habit.id)}
+          onClick={() => onToggle(habit)}
           disabled={isToggling}
           className={cn(
             'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border-2 transition-all',
@@ -266,21 +270,25 @@ function HabitItem({ habit, onToggle, onEdit, onDelete, isToggling }: HabitItemP
               </Badge>
             )}
             <span className="text-[10px] text-muted-foreground">{habit.frequency}</span>
+            {habit.scheduledToday ? (
+              <Badge
+                variant="outline"
+                className="border-emerald-300 px-1.5 py-0 text-[9px] text-emerald-700"
+              >
+                today
+              </Badge>
+            ) : (
+              <span className="text-[10px] text-muted-foreground/60">rest day</span>
+            )}
           </div>
         </div>
 
-        {/* Streak + Progress */}
+        {/* Progress toward today's target */}
         <div className="flex items-center gap-3">
-          {streak > 0 && (
-            <div className="flex items-center gap-1 text-amber-600">
-              <Flame className="h-3.5 w-3.5" />
-              <span className="text-xs font-semibold">{streak}</span>
-            </div>
-          )}
-          {(habit as any).targetCount > 1 && (
+          {habit.progress && habit.progress.targetCount > 1 && (
             <Progress
-              value={(habit as any).completedCount ?? 0}
-              max={(habit as any).targetCount}
+              value={habit.progress.completedCount}
+              max={habit.progress.targetCount}
               className="h-1.5 w-16"
             />
           )}
@@ -288,6 +296,18 @@ function HabitItem({ habit, onToggle, onEdit, onDelete, isToggling }: HabitItemP
 
         {/* Actions */}
         <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            onClick={() => setExpanded((prev) => !prev)}
+            aria-label={`${expanded ? 'Hide' : 'Show'} stats for "${habit.name}"`}
+            aria-expanded={expanded}
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {expanded ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
+          </button>
           <button
             onClick={() => onEdit(habit)}
             className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -302,69 +322,65 @@ function HabitItem({ habit, onToggle, onEdit, onDelete, isToggling }: HabitItemP
           </button>
         </div>
       </CardContent>
+
+      {/* Lazy per-habit stats — fetched only when the row is expanded */}
+      {expanded && <HabitStatsPanel habitId={habit.id} />}
     </Card>
   );
 }
 
-// ─── Monthly Completion Chart ─────────────────────────────────────────────────
+// ─── Per-habit Stats Panel (lazy useHabitStats) ──────────────────────────────
 
-function MonthlyChart({ habits }: { habits: Habit[] }) {
-  const daysInMonth = new Date(
-    new Date().getFullYear(),
-    new Date().getMonth() + 1,
-    0,
-  ).getDate();
+function HabitStatsPanel({ habitId }: { habitId: string }) {
+  const { data: stats, isLoading, isError } = useHabitStats(habitId);
 
-  const today = new Date().getDate();
-  const maxPossible = habits.length;
+  if (isLoading) {
+    return (
+      <div className="border-t border-border px-4 py-3">
+        <Skeleton className="h-4 w-full" />
+      </div>
+    );
+  }
 
-  // Simulated data: generate random completion counts per day for the chart
-  // In real app, this would come from API stats
-  const dailyRates = Array.from({ length: today }, (_, i) => {
-    const dayNum = i + 1;
-    // Deterministic pseudo-random based on day
-    const seed = (dayNum * 7 + habits.length * 3) % 10;
-    return Math.min(maxPossible, Math.floor((seed / 10) * maxPossible) + Math.floor(maxPossible * 0.4));
-  });
+  if (isError || !stats) {
+    return (
+      <div className="border-t border-border px-4 py-3">
+        <p className="text-xs text-muted-foreground">Couldn't load stats.</p>
+      </div>
+    );
+  }
 
-  const avgRate = dailyRates.length
-    ? Math.round((dailyRates.reduce((a, b) => a + b, 0) / dailyRates.length / maxPossible) * 100)
-    : 0;
+  if (stats.totalScheduledDays === 0) {
+    return (
+      <div className="border-t border-border px-4 py-3">
+        <p className="text-xs text-muted-foreground">
+          No stats yet — this habit hasn't had any scheduled days.
+        </p>
+      </div>
+    );
+  }
+
+  const cells: { label: string; value: string }[] = [
+    {
+      label: 'Completion rate',
+      value: `${Math.min(100, Math.max(0, Math.round(stats.completionRate * 100)))}%`,
+    },
+    { label: 'Current streak', value: `${stats.currentStreak}d` },
+    { label: 'Longest streak', value: `${stats.longestStreak}d` },
+    { label: 'Total completions', value: `${stats.totalCompletions}` },
+  ];
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <span className="flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            Monthly Completion
-          </span>
-          <span className="text-xs font-normal text-muted-foreground">
-            {avgRate}% avg
-          </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-end gap-[3px]" style={{ height: 80 }}>
-          {dailyRates.map((count, i) => {
-            const height = maxPossible > 0 ? (count / maxPossible) * 100 : 0;
-            return (
-              <div
-                key={i}
-                className="flex-1 rounded-t bg-primary/20 transition-colors hover:bg-primary/40"
-                style={{ height: `${Math.max(height, 4)}%` }}
-                title={`Day ${i + 1}: ${count}/${maxPossible}`}
-              />
-            );
-          })}
+    <div className="grid grid-cols-2 gap-3 border-t border-border px-4 py-3 sm:grid-cols-4">
+      {cells.map((cell) => (
+        <div key={cell.label}>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            {cell.label}
+          </p>
+          <p className="text-sm font-semibold text-foreground">{cell.value}</p>
         </div>
-        <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
-          <span>1</span>
-          <span>{Math.floor(today / 2)}</span>
-          <span>{today}</span>
-        </div>
-      </CardContent>
-    </Card>
+      ))}
+    </div>
   );
 }
 
@@ -378,7 +394,7 @@ interface HabitFormDialogProps {
     name: string;
     icon: string | null;
     category: HabitCategory | null;
-    frequency: string;
+    frequency: HabitFrequency;
   }) => void;
   isSaving: boolean;
 }
@@ -387,7 +403,7 @@ function HabitFormDialog({ open, onOpenChange, habit, onSave, isSaving }: HabitF
   const [name, setName] = useState('');
   const [icon, setIcon] = useState<string | null>(null);
   const [category, setCategory] = useState<HabitCategory | null>(null);
-  const [frequency, setFrequency] = useState('daily');
+  const [frequency, setFrequency] = useState<HabitFrequency>('daily');
 
   // Reset form when opening
   const handleOpen = (isOpen: boolean) => {
@@ -470,7 +486,7 @@ function HabitFormDialog({ open, onOpenChange, habit, onSave, isSaving }: HabitF
             <Select
               id="habit-frequency"
               value={frequency}
-              onChange={(e) => setFrequency(e.target.value)}
+              onChange={(e) => setFrequency(e.target.value as HabitFrequency)}
             >
               {FREQUENCY_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>

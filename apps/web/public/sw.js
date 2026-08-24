@@ -1,6 +1,6 @@
-// KaizenLife Service Worker — App Shell Caching
+// KaizenLife Service Worker — App Shell Caching + Web Push
 // Bump CACHE_VERSION on every deploy to auto-invalidate stale caches.
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v4';
 const CACHE_NAME = `kaizenlife-${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/',
@@ -46,8 +46,11 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip non-GET and API requests
+  // Skip non-GET requests, any API calls, and any cross-origin requests.
+  // API/personal data must NEVER be written to Cache Storage.
   if (request.method !== 'GET') return;
+  if (url.pathname.startsWith('/api/')) return;
+  if (url.origin !== self.location.origin) return;
   if (url.hostname === 'localhost') return;
 
   // Navigation requests: network-first with cache fallback
@@ -93,5 +96,43 @@ self.addEventListener('fetch', (event) => {
         return response;
       });
     }),
+  );
+});
+
+// ─── Web Push ────────────────────────────────────────────────────────────────
+// Server sends encrypted JSON: { title, body, tag?, url? }.
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { title: 'KaizenLife', body: event.data ? event.data.text() : '' };
+  }
+  event.waitUntil(
+    self.registration.showNotification(payload.title || 'KaizenLife', {
+      body: payload.body || '',
+      tag: payload.tag || 'kaizenlife',
+      icon: '/icons/icon-192.svg',
+      badge: '/icons/icon-192.svg',
+      data: { url: payload.url || '/' },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    (async () => {
+      const windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const client of windowClients) {
+        if ('focus' in client) {
+          client.navigate(target).catch(() => {});
+          return client.focus();
+        }
+      }
+      return self.clients.openWindow(target);
+    })(),
   );
 });

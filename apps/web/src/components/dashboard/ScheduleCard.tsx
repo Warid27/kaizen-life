@@ -71,7 +71,7 @@ export function ScheduleCard({ tasks, isLoading }: ScheduleCardProps) {
                   className="flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50"
                 >
                   <span className="w-16 shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
-                    {formatTime(task.startTime)}
+                    {formatTime(task.startTime ?? null)}
                   </span>
                   <span className="flex-1 truncate text-sm text-card-foreground">
                     {task.title}

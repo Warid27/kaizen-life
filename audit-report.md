@@ -292,3 +292,7 @@ Both files contain evidence from live Chrome DevTools testing against `https://k
 ---
 
 *Audit Report generated with SDD 6.0. Live testing completed 2026-08-09 via Chrome DevTools MCP.*
+
+---
+
+> **SUPERSEDED (2026-08-24):** The findings in this report have been remediated — see `reviews/` for the full audit that drove the fixes and `git log` for the remediation commits. Kept for history only.

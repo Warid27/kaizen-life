@@ -1,5 +1,4 @@
 // Re-export all schemas and types
-export * from "./schemas/user";
 export * from "./schemas/task";
 export * from "./schemas/checkin";
 export * from "./schemas/diary";
@@ -13,6 +12,14 @@ export * from "./schemas/transaction";
 export * from "./schemas/goal";
 export * from "./schemas/monthlyReview";
 export * from "./schemas/import";
+export * from "./schemas/semester";
+export * from "./schemas/course";
+export * from "./schemas/assignment";
+export * from "./schemas/settings";
+export * from "./schemas/push";
+
+// Date utilities (canonical timezone-aware helpers)
+export * from "./utils/date";
 
 // Re-export Zod for convenience
 export { z } from "zod";

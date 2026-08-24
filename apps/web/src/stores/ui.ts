@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { todayStr as sharedTodayStr, shiftDate } from '@kaizenlife/shared';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,13 +29,17 @@ interface UIState {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+// Canonical browser-local "today" from the shared package — fixes the
+// split-brain where each app hand-rolled its own (sometimes UTC-wrong) copy.
 
-function todayStr(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+export function todayStr(): string {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return sharedTodayStr(tz);
+}
+
+/** Shift a YYYY-MM-DD date by N days using the shared util. */
+export function shiftDays(date: string, days: number): string {
+  return shiftDate(date, days);
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────

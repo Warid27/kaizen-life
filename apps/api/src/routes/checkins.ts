@@ -7,30 +7,22 @@ import {
   UpsertCheckinSchema,
   CheckinRangeSchema,
 } from "@kaizenlife/shared";
+import { apiError, validationHook } from "../lib/api";
 
-const checkinsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
-
-// Hardcoded user for now (no auth middleware yet)
-const USER_ID = "default-user";
+const checkinsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
 // ---------------------------------------------------------------------------
 // GET /checkins — list check-ins, optional ?from=&to= date range filter
 // ---------------------------------------------------------------------------
 checkinsRouter.get(
   "/checkins",
-  zValidator("query", CheckinRangeSchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Invalid query parameters", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("query", CheckinRangeSchema, validationHook),
   async (c) => {
     const db = c.get("db");
+    const userId = c.get("userId");
     const { from, to } = c.req.valid("query");
 
-    const conditions = [eq(checkins.userId, USER_ID), isNull(checkins.deletedAt)];
+    const conditions = [eq(checkins.userId, userId), isNull(checkins.deletedAt)];
     if (from) conditions.push(gte(checkins.date, from));
     if (to) conditions.push(lte(checkins.date, to));
 
@@ -46,42 +38,37 @@ checkinsRouter.get(
 );
 
 // ---------------------------------------------------------------------------
-// PUT /checkins/:date — upsert a check-in for a specific date
+// PUT /checkins/:date — upsert a check-in for a specific date.
+// Resurrects soft-deleted rows (G1): the previous code updated an invisible
+// soft-deleted row without clearing deletedAt, so saves silently vanished.
 // ---------------------------------------------------------------------------
 checkinsRouter.put(
   "/checkins/:date",
-  zValidator("json", UpsertCheckinSchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Invalid body", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("json", UpsertCheckinSchema, validationHook),
   async (c) => {
     const db = c.get("db");
-    const date = c.req.param("date");
+    const userId = c.get("userId");
+    const date = String(c.req.param("date"));
 
-    // Validate the date param matches YYYY-MM-DD
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return c.json({ error: "Date must be YYYY-MM-DD" }, 400);
+      return apiError(c, 400, "VALIDATION_ERROR", "Date must be YYYY-MM-DD");
     }
 
     const body = c.req.valid("json");
     const now = Math.floor(Date.now() / 1000);
 
-    // Check for existing row
+    // Look for ANY row for this date — including soft-deleted ones.
     const existing = await db
-      .select()
+      .select({ id: checkins.id })
       .from(checkins)
-      .where(and(eq(checkins.userId, USER_ID), eq(checkins.date, date)))
+      .where(and(eq(checkins.userId, userId), eq(checkins.date, date)))
       .get();
 
     if (existing) {
       const updated = await db
         .update(checkins)
-        .set({ ...body, updatedAt: now })
-        .where(and(eq(checkins.userId, USER_ID), eq(checkins.date, date)))
+        .set({ ...body, deletedAt: null, updatedAt: now })
+        .where(and(eq(checkins.userId, userId), eq(checkins.date, date)))
         .returning()
         .get();
       return c.json(updated);
@@ -92,7 +79,7 @@ checkinsRouter.put(
       .insert(checkins)
       .values({
         id,
-        userId: USER_ID,
+        userId,
         date,
         ...body,
         createdAt: now,

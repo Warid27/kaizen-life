@@ -54,3 +54,4 @@ screenshots/
 # Bun
 .bunr
 .buninstall
+apps/api/.dev.vars

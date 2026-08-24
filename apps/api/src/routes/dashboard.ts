@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, isNull, gte, lte, lt, sql, asc } from "drizzle-orm";
+import { eq, and, isNull, gte, lte, lt, sql, asc, isNull as isNullCol, ne, inArray } from "drizzle-orm";
 import type { Bindings, AppDb } from "../db/client";
 import {
   tasks,
@@ -12,91 +12,94 @@ import {
   clients,
   clientFollowups,
 } from "../db/schema";
+import { apiError } from "../lib/api";
+import { getTodayForUser } from "../lib/date";
+import { shiftDate, DEFAULT_CURRENCY } from "@kaizenlife/shared";
+import { isScheduledOnDate, parseDate } from "../services/habit-recurrence";
 
-const dashboardRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
-
-const USER_ID = "default-user";
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function todayStr(): string {
-  return toDateStr(new Date());
-}
-
-function toDateStr(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-/** Shift a date string by N days and return YYYY-MM-DD */
-function shiftDate(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return toDateStr(d);
-}
-
-/** Return YYYY-MM-DD of the first day of the current month */
-function currentMonthStart(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-}
-
-/** Return YYYY-MM-DD of the last day of the current month */
-function currentMonthEnd(): string {
-  const d = new Date();
-  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-}
+const dashboardRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
 // ─── GET /dashboard/today ────────────────────────────────────────────────────
+// Fixes applied:
+// - P5: independent sections now run via Promise.all instead of ~10 serial
+//   round trips.
+// - BL1/BL23: "today" resolves through the user's timezone; the task list no
+//   longer silently drops undated and overdue work.
+// - BL24: habit checklist respects recurrence scheduling; NULL progress
+//   renders as explicit zeros.
+// - BL12: finance totals are bucketed per currency (flat fields kept for the
+//   primary currency so existing consumers don't break).
+// - DB1: follow-up join excludes soft-deleted clients.
 dashboardRouter.get("/dashboard/today", async (c) => {
   try {
     const db = c.get("db");
-    const today = todayStr();
+    const userId = c.get("userId");
+
+    const today = await getTodayForUser(db, userId);
     const yesterday = shiftDate(today, -1);
     const weekLater = shiftDate(today, 7);
-    const monthStart = currentMonthStart();
-    const monthEnd = currentMonthEnd();
-    const baseConditions = [eq(tasks.userId, USER_ID), isNull(tasks.deletedAt)];
 
-    // 1. Today's tasks (schedule + priorities)
-    const todayTasks = await db
+    // Month window derived from the user's "today", not server-UTC.
+    const monthPrefix = today.slice(0, 7);
+    const [yearStr = "", monStr = ""] = monthPrefix.split("-");
+    const lastDay = new Date(Date.UTC(parseInt(yearStr, 10), parseInt(monStr, 10), 0)).getUTCDate();
+    const monthStart = `${monthPrefix}-01`;
+    const monthEnd = `${monthPrefix}-${String(lastDay).padStart(2, "0")}`;
+
+    // 1. Today's tasks: scheduled today + undated backlog items.
+    const todayTasksPromise = db
       .select()
       .from(tasks)
-      .where(and(...baseConditions, eq(tasks.date, today)))
+      .where(
+        and(
+          eq(tasks.userId, userId),
+          isNull(tasks.deletedAt),
+          ne(tasks.status, "cancelled"),
+          sql`(${tasks.date} = ${today} OR ${tasks.date} IS NULL)`,
+        ),
+      )
       .orderBy(asc(tasks.startTime))
       .all();
 
-    // 2. Today's habit checklist with completion status
-    const todayHabits = await db
+    // 1b. Overdue: dated before today but not done/cancelled.
+    const overdueTasksPromise = db
       .select({
-        id: habits.id,
-        name: habits.name,
-        icon: habits.icon,
-        category: habits.category,
-        targetCountPerPeriod: habits.targetCountPerPeriod,
-        sortOrder: habits.sortOrder,
-        completedCount: habitLogs.completedCount,
-        targetCount: habitLogs.targetCount,
+        id: tasks.id,
+        title: tasks.title,
+        date: tasks.date,
+        priority: tasks.priority,
+        status: tasks.status,
+        startTime: tasks.startTime,
       })
-      .from(habits)
-      .leftJoin(
-        habitLogs,
-        and(eq(habits.id, habitLogs.habitId), eq(habitLogs.date, today)),
-      )
+      .from(tasks)
       .where(
         and(
-          eq(habits.userId, USER_ID),
-          isNull(habits.deletedAt),
-          eq(habits.active, true),
+          eq(tasks.userId, userId),
+          isNull(tasks.deletedAt),
+          lt(tasks.date, today),
+          inArray(tasks.status, ["todo", "in_progress"]),
         ),
       )
+      .orderBy(asc(tasks.date))
+      .all();
+
+    // 2. Active habits (scheduling filtered below against the user's today).
+    const activeHabitsPromise = db
+      .select()
+      .from(habits)
+      .where(and(eq(habits.userId, userId), isNull(habits.deletedAt), eq(habits.active, true)))
       .orderBy(asc(habits.sortOrder))
       .all();
 
-    // 3. Yesterday's sleep summary
-    const yesterdaySleep = await db
+    const todaysLogsPromise = db
+      .select()
+      .from(habitLogs)
+      .where(and(eq(habitLogs.userId, userId), eq(habitLogs.date, today)))
+      .all();
+
+    // 3. Yesterday's sleep summary + 4. 7-day sleep average (single scan).
+    const sevenDaysAgo = shiftDate(today, -7);
+    const sleepRowsPromise = db
       .select({
         date: checkins.date,
         bedTime: checkins.bedTime,
@@ -108,52 +111,25 @@ dashboardRouter.get("/dashboard/today", async (c) => {
       .from(checkins)
       .where(
         and(
-          eq(checkins.userId, USER_ID),
-          eq(checkins.date, yesterday),
-          isNull(checkins.deletedAt),
-        ),
-      )
-      .get();
-
-    // 4. 7-day sleep average
-    const sevenDaysAgo = shiftDate(today, -7);
-    const recentSleepRows = await db
-      .select({
-        totalSleepMinutes: checkins.totalSleepMinutes,
-      })
-      .from(checkins)
-      .where(
-        and(
-          eq(checkins.userId, USER_ID),
+          eq(checkins.userId, userId),
           gte(checkins.date, sevenDaysAgo),
-          lte(checkins.date, today),
+          lte(checkins.date, yesterday),
           isNull(checkins.deletedAt),
-          sql`${checkins.totalSleepMinutes} IS NOT NULL`,
         ),
       )
       .all();
 
-    const sleepDaysCount = recentSleepRows.length;
-    const avgSleepMinutes =
-      sleepDaysCount > 0
-        ? Math.round(
-            recentSleepRows.reduce(
-              (sum, r) => sum + (r.totalSleepMinutes ?? 0),
-              0,
-            ) / sleepDaysCount,
-          )
-        : null;
-
-    // 5. Current month income/expense/net from transactions
-    const monthTxRows = await db
+    // 5. Current-month transactions (per-currency aggregation client-side).
+    const monthTxRowsPromise = db
       .select({
         type: transactions.type,
         amountCents: transactions.amountCents,
+        currency: transactions.currency,
       })
       .from(transactions)
       .where(
         and(
-          eq(transactions.userId, USER_ID),
+          eq(transactions.userId, userId),
           gte(transactions.date, monthStart),
           lte(transactions.date, monthEnd),
           isNull(transactions.deletedAt),
@@ -161,31 +137,15 @@ dashboardRouter.get("/dashboard/today", async (c) => {
       )
       .all();
 
-    let incomeCents = 0;
-    let expenseCents = 0;
-    for (const tx of monthTxRows) {
-      if (tx.type === "income") {
-        incomeCents += tx.amountCents;
-      } else {
-        expenseCents += tx.amountCents;
-      }
-    }
-
     // 6. Active projects
-    const activeProjects = await db
+    const activeProjectsPromise = db
       .select()
       .from(projects)
-      .where(
-        and(
-          eq(projects.userId, USER_ID),
-          eq(projects.status, "active"),
-          isNull(projects.deletedAt),
-        ),
-      )
+      .where(and(eq(projects.userId, userId), eq(projects.status, "active"), isNull(projects.deletedAt)))
       .all();
 
-    // 7. Upcoming deadlines — tasks with date in [today, today+7]
-    const upcomingTaskDeadlines = await db
+    // 7a. Upcoming task deadlines — open items only (BL23).
+    const upcomingTaskDeadlinesPromise = db
       .select({
         id: tasks.id,
         title: tasks.title,
@@ -197,17 +157,18 @@ dashboardRouter.get("/dashboard/today", async (c) => {
       .from(tasks)
       .where(
         and(
-          eq(tasks.userId, USER_ID),
+          eq(tasks.userId, userId),
           isNull(tasks.deletedAt),
           gte(tasks.date, today),
           lte(tasks.date, weekLater),
+          inArray(tasks.status, ["todo", "in_progress"]),
         ),
       )
       .orderBy(asc(tasks.date))
       .all();
 
-    // Upcoming deadlines — assignments with due_date in [today, today+7]
-    const upcomingAssignmentDeadlines = await db
+    // 7b. Upcoming assignment deadlines.
+    const upcomingAssignmentDeadlinesPromise = db
       .select({
         id: assignments.id,
         title: assignments.title,
@@ -219,7 +180,7 @@ dashboardRouter.get("/dashboard/today", async (c) => {
       .from(assignments)
       .where(
         and(
-          eq(assignments.userId, USER_ID),
+          eq(assignments.userId, userId),
           isNull(assignments.deletedAt),
           gte(assignments.dueDate, today),
           lte(assignments.dueDate, weekLater),
@@ -228,11 +189,8 @@ dashboardRouter.get("/dashboard/today", async (c) => {
       .orderBy(asc(assignments.dueDate))
       .all();
 
-    const upcomingDeadlines = [...upcomingTaskDeadlines, ...upcomingAssignmentDeadlines]
-      .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
-
-    // 8. Overdue client follow-ups
-    const overdueFollowups = await db
+    // 8. Overdue client follow-ups — join excludes deleted clients (DB1).
+    const overdueFollowupsPromise = db
       .select({
         id: clientFollowups.id,
         clientId: clientFollowups.clientId,
@@ -242,10 +200,10 @@ dashboardRouter.get("/dashboard/today", async (c) => {
         notes: clientFollowups.notes,
       })
       .from(clientFollowups)
-      .innerJoin(clients, eq(clientFollowups.clientId, clients.id))
+      .innerJoin(clients, and(eq(clientFollowups.clientId, clients.id), isNullCol(clients.deletedAt)))
       .where(
         and(
-          eq(clientFollowups.userId, USER_ID),
+          eq(clientFollowups.userId, userId),
           isNull(clientFollowups.deletedAt),
           eq(clientFollowups.status, "pending"),
           lt(clientFollowups.nextFollowupDate, today),
@@ -253,12 +211,95 @@ dashboardRouter.get("/dashboard/today", async (c) => {
       )
       .all();
 
+    const [
+      todayTasks,
+      overdueTasks,
+      activeHabits,
+      todaysLogs,
+      sleepRows,
+      monthTxRows,
+      activeProjects,
+      upcomingTaskDeadlines,
+      upcomingAssignmentDeadlines,
+      overdueFollowups,
+    ] = await Promise.all([
+      todayTasksPromise,
+      overdueTasksPromise,
+      activeHabitsPromise,
+      todaysLogsPromise,
+      sleepRowsPromise,
+      monthTxRowsPromise,
+      activeProjectsPromise,
+      upcomingTaskDeadlinesPromise,
+      upcomingAssignmentDeadlinesPromise,
+      overdueFollowupsPromise,
+    ]);
+
+    // Habit checklist: only habits actually scheduled on the user's today.
+    const logByHabitId = new Map(todaysLogs.map((l) => [l.habitId, l]));
+    const todayHabits = activeHabits
+      .filter((habit) => isScheduledOnDate(habit, parseDate(today)))
+      .map((habit) => {
+        const log = logByHabitId.get(habit.id);
+        const completedCount = log?.completedCount ?? 0;
+        return {
+          id: habit.id,
+          name: habit.name,
+          icon: habit.icon,
+          category: habit.category,
+          frequency: habit.frequency,
+          targetCountPerPeriod: habit.targetCountPerPeriod,
+          sortOrder: habit.sortOrder,
+          completedCount,
+          targetCount: log?.targetCount ?? habit.targetCountPerPeriod,
+          completedToday: completedCount >= (log?.targetCount ?? habit.targetCountPerPeriod),
+        };
+      });
+
+    // Sleep aggregates from the single 7-day scan.
+    const yesterdaySleep = sleepRows.find((r) => r.date === yesterday) ?? null;
+    const measuredNights = sleepRows.filter((r) => r.totalSleepMinutes != null);
+    const sleepDaysCount = measuredNights.length;
+    const avgSleepMinutes =
+      sleepDaysCount > 0
+        ? Math.round(
+            measuredNights.reduce((sum, r) => sum + (r.totalSleepMinutes ?? 0), 0) / sleepDaysCount,
+          )
+        : null;
+
+    // Finance per currency (BL12).
+    const financeByCurrency: Record<
+      string,
+      { incomeCents: number; expenseCents: number; netCents: number }
+    > = {};
+    let transactionCount = 0;
+    for (const tx of monthTxRows) {
+      transactionCount += 1;
+      const bucket =
+        financeByCurrency[tx.currency] ??
+        (financeByCurrency[tx.currency] = { incomeCents: 0, expenseCents: 0, netCents: 0 });
+      if (tx.type === "income") bucket.incomeCents += tx.amountCents;
+      else bucket.expenseCents += tx.amountCents;
+      bucket.netCents = bucket.incomeCents - bucket.expenseCents;
+    }
+    const primaryFinance =
+      financeByCurrency[DEFAULT_CURRENCY] ?? Object.values(financeByCurrency)[0] ?? {
+        incomeCents: 0,
+        expenseCents: 0,
+        netCents: 0,
+      };
+
+    const upcomingDeadlines = [...upcomingTaskDeadlines, ...upcomingAssignmentDeadlines].sort(
+      (a, b) => (a.date ?? "").localeCompare(b.date ?? ""),
+    );
+
     return c.json({
       date: today,
       tasks: todayTasks,
+      overdueTasks,
       habits: todayHabits,
       sleep: {
-        yesterday: yesterdaySleep ?? null,
+        yesterday: yesterdaySleep,
         avgLast7Days: {
           minutes: avgSleepMinutes,
           daysCount: sleepDaysCount,
@@ -266,10 +307,11 @@ dashboardRouter.get("/dashboard/today", async (c) => {
       },
       finance: {
         month: { start: monthStart, end: monthEnd },
-        incomeCents,
-        expenseCents,
-        netCents: incomeCents - expenseCents,
-        transactionCount: monthTxRows.length,
+        byCurrency: financeByCurrency,
+        incomeCents: primaryFinance.incomeCents,
+        expenseCents: primaryFinance.expenseCents,
+        netCents: primaryFinance.netCents,
+        transactionCount,
       },
       projects: activeProjects,
       upcomingDeadlines,
@@ -277,10 +319,7 @@ dashboardRouter.get("/dashboard/today", async (c) => {
     });
   } catch (err) {
     console.error("GET /dashboard/today error:", err);
-    return c.json(
-      { error: { code: "INTERNAL", message: "Failed to build dashboard" } },
-      500,
-    );
+    return apiError(c, 500, "INTERNAL", "Failed to build dashboard");
   }
 });
 

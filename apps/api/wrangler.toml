@@ -15,3 +15,7 @@ database_id = "3a564ea9-7aa6-4a27-8fb2-6fe55a15d52e"
 [build]
 command = "bun install"
 watch_dir = "src"
+
+# Push dispatcher: due reminders + ~08:00 local daily digests.
+[triggers]
+crons = ["*/15 * * * *"]

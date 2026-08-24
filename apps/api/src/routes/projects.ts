@@ -7,14 +7,14 @@ import {
   ProjectFilterSchema,
 } from "@kaizenlife/shared";
 import { eq, and, isNull, desc } from "drizzle-orm";
+import { apiError, notFound } from "../lib/api";
 
-const projectsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
-
-const USER_ID = "default-user";
+const projectsRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb; userId: string } }>();
 
 // ─── List Projects ───────────────────────────────────────────
 projectsRouter.get("/projects", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const rawQuery: Record<string, string> = {};
   for (const [k, v] of Object.entries(c.req.query())) {
     if (v !== undefined) rawQuery[k] = v;
@@ -22,14 +22,11 @@ projectsRouter.get("/projects", async (c) => {
   const parsed = ProjectFilterSchema.safeParse(rawQuery);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Invalid query parameters", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Invalid query parameters", parsed.error.flatten());
   }
 
   const { status, priority, clientId } = parsed.data;
-  const conditions = [eq(projects.userId, USER_ID), isNull(projects.deletedAt)];
+  const conditions = [eq(projects.userId, userId), isNull(projects.deletedAt)];
 
   if (status) conditions.push(eq(projects.status, status));
   if (priority) conditions.push(eq(projects.priority, priority));
@@ -48,16 +45,17 @@ projectsRouter.get("/projects", async (c) => {
 // ─── Get Project by ID ───────────────────────────────────────
 projectsRouter.get("/projects/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const row = await db
     .select()
     .from(projects)
-    .where(and(eq(projects.id, id), eq(projects.userId, USER_ID), isNull(projects.deletedAt)))
+    .where(and(eq(projects.id, id), eq(projects.userId, userId), isNull(projects.deletedAt)))
     .get();
 
   if (!row) {
-    return c.json({ error: "Project not found" }, 404);
+    return notFound(c, "Project");
   }
 
   return c.json(row);
@@ -66,14 +64,12 @@ projectsRouter.get("/projects/:id", async (c) => {
 // ─── Create Project ──────────────────────────────────────────
 projectsRouter.post("/projects", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const body = await c.req.json();
   const parsed = CreateProjectSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const data = parsed.data;
@@ -84,7 +80,7 @@ projectsRouter.post("/projects", async (c) => {
     .insert(projects)
     .values({
       id,
-      userId: USER_ID,
+      userId,
       name: data.name,
       clientId: data.clientId ?? null,
       status: data.status ?? "planning",
@@ -105,25 +101,23 @@ projectsRouter.post("/projects", async (c) => {
 // ─── Update Project ──────────────────────────────────────────
 projectsRouter.patch("/projects/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
   const body = await c.req.json();
   const parsed = UpdateProjectSchema.safeParse(body);
 
   if (!parsed.success) {
-    return c.json(
-      { error: "Validation failed", details: parsed.error.flatten() },
-      400,
-    );
+    return apiError(c, 400, "VALIDATION_ERROR", "Validation failed", parsed.error.flatten());
   }
 
   const existing = await db
-    .select()
+    .select({ id: projects.id })
     .from(projects)
-    .where(and(eq(projects.id, id), eq(projects.userId, USER_ID), isNull(projects.deletedAt)))
+    .where(and(eq(projects.id, id), eq(projects.userId, userId), isNull(projects.deletedAt)))
     .get();
 
   if (!existing) {
-    return c.json({ error: "Project not found" }, 404);
+    return notFound(c, "Project");
   }
 
   const data = parsed.data;
@@ -140,10 +134,11 @@ projectsRouter.patch("/projects/:id", async (c) => {
   if (data.pic !== undefined) fieldsToUpdate.pic = data.pic ?? null;
   if (data.description !== undefined) fieldsToUpdate.description = data.description ?? null;
 
+  // Guards kept in the write itself (B5).
   const updated = await db
     .update(projects)
     .set(fieldsToUpdate)
-    .where(eq(projects.id, id))
+    .where(and(eq(projects.id, id), eq(projects.userId, userId), isNull(projects.deletedAt)))
     .returning()
     .get();
 
@@ -153,23 +148,24 @@ projectsRouter.patch("/projects/:id", async (c) => {
 // ─── Delete Project (soft) ───────────────────────────────────
 projectsRouter.delete("/projects/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const existing = await db
-    .select()
+    .select({ id: projects.id })
     .from(projects)
-    .where(and(eq(projects.id, id), eq(projects.userId, USER_ID), isNull(projects.deletedAt)))
+    .where(and(eq(projects.id, id), eq(projects.userId, userId), isNull(projects.deletedAt)))
     .get();
 
   if (!existing) {
-    return c.json({ error: "Project not found" }, 404);
+    return notFound(c, "Project");
   }
 
   const now = Math.floor(Date.now() / 1000);
 
   await db.update(projects)
     .set({ deletedAt: now, updatedAt: now })
-    .where(eq(projects.id, id))
+    .where(and(eq(projects.id, id), eq(projects.userId, userId), isNull(projects.deletedAt)))
     .run();
 
   return c.json({ success: true });

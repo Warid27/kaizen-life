@@ -1,4 +1,13 @@
-import { sqliteTable, text, integer, real, unique } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, unique, uniqueIndex, index } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+
+/**
+ * Partial-unique helper: uniqueness that ignores soft-deleted rows.
+ * Fixes DB3 — with plain UNIQUE constraints, re-creating a soft-deleted row
+ * hit the unique index and 500'd (habit logs) or updates landed invisibly on
+ * soft-deleted rows (checkins/diary/reviews).
+ */
+const liveRowsOnly = sql`deleted_at IS NULL`;
 
 // ---------------------------------------------------------------------------
 // Users
@@ -42,7 +51,10 @@ export const tasks = sqliteTable("tasks", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   deletedAt: integer("deleted_at"),
-});
+}, (t) => [
+  index("idx_tasks_user_date").on(t.userId, t.date),
+  index("idx_tasks_user_status").on(t.userId, t.status),
+]);
 
 // ---------------------------------------------------------------------------
 // Habits
@@ -87,9 +99,12 @@ export const habitLogs = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
     deletedAt: integer("deleted_at"),
   },
-  (t) => ({
-    uniqHabitDate: unique().on(t.habitId, t.date),
-  }),
+  (t) => [
+    uniqueIndex("uniq_habit_logs_habit_date_live")
+      .on(t.habitId, t.date)
+      .where(liveRowsOnly),
+    index("idx_habit_logs_user_date").on(t.userId, t.date),
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -114,9 +129,11 @@ export const checkins = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
     deletedAt: integer("deleted_at"),
   },
-  (t) => ({
-    uniqUserDate: unique().on(t.userId, t.date),
-  }),
+  (t) => [
+    uniqueIndex("uniq_checkins_user_date_live")
+      .on(t.userId, t.date)
+      .where(liveRowsOnly),
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -136,9 +153,11 @@ export const diaryEntries = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
     deletedAt: integer("deleted_at"),
   },
-  (t) => ({
-    uniqUserDate: unique().on(t.userId, t.date),
-  }),
+  (t) => [
+    uniqueIndex("uniq_diary_user_date_live")
+      .on(t.userId, t.date)
+      .where(liveRowsOnly),
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -212,7 +231,9 @@ export const assignments = sqliteTable("assignments", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   deletedAt: integer("deleted_at"),
-});
+}, (t) => [
+  index("idx_assignments_user_due").on(t.userId, t.dueDate),
+]);
 
 // ---------------------------------------------------------------------------
 // Semester Events (midterm, final, deadline, other)
@@ -303,7 +324,9 @@ export const clientFollowups = sqliteTable("client_followups", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   deletedAt: integer("deleted_at"),
-});
+}, (t) => [
+  index("idx_followups_user_next_date").on(t.userId, t.nextFollowupDate),
+]);
 
 // ---------------------------------------------------------------------------
 // Standups (daily standup per team member)
@@ -326,7 +349,11 @@ export const standups = sqliteTable("standups", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   deletedAt: integer("deleted_at"),
-});
+}, (t) => [
+  // Plain index (not UNIQUE): existing rows may already violate the natural
+  // key, and a unique constraint would break inserts (DB4 noted as debt).
+  index("idx_standups_member_date").on(t.teamMemberId, t.date),
+]);
 
 // ---------------------------------------------------------------------------
 // Meetings
@@ -341,7 +368,9 @@ export const meetings = sqliteTable("meetings", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   deletedAt: integer("deleted_at"),
-});
+}, (t) => [
+  index("idx_meetings_user_date").on(t.userId, t.date),
+]);
 
 // ---------------------------------------------------------------------------
 // Meeting Action Items
@@ -359,7 +388,9 @@ export const meetingActionItems = sqliteTable("meeting_action_items", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   deletedAt: integer("deleted_at"),
-});
+}, (t) => [
+  index("idx_action_items_user_deadline").on(t.userId, t.deadline),
+]);
 
 // ---------------------------------------------------------------------------
 // Transactions (finance — amounts in integer cents)
@@ -377,7 +408,9 @@ export const transactions = sqliteTable("transactions", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   deletedAt: integer("deleted_at"),
-});
+}, (t) => [
+  index("idx_transactions_user_date").on(t.userId, t.date),
+]);
 
 // ---------------------------------------------------------------------------
 // Goals (self-referential hierarchy: annual → monthly → weekly)
@@ -422,9 +455,11 @@ export const monthlyReviews = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
     deletedAt: integer("deleted_at"),
   },
-  (t) => ({
-    uniqUserMonth: unique().on(t.userId, t.year, t.month),
-  }),
+  (t) => [
+    uniqueIndex("uniq_reviews_user_month_live")
+      .on(t.userId, t.year, t.month)
+      .where(liveRowsOnly),
+  ],
 );
 
 // ---------------------------------------------------------------------------
@@ -447,4 +482,24 @@ export const reminders = sqliteTable("reminders", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   deletedAt: integer("deleted_at"),
-});
+}, (t) => [
+  index("idx_reminders_status_trigger").on(t.status, t.triggerAt),
+]);
+
+// ---------------------------------------------------------------------------
+// Web Push subscriptions (one row per browser endpoint; hard-deleted, no soft delete)
+// ---------------------------------------------------------------------------
+export const pushSubscriptions = sqliteTable("push_subscriptions", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  /** Push-service endpoint URL � globally unique per browser subscription. */
+  endpoint: text("endpoint").notNull(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  userAgent: text("user_agent"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (t) => [
+  uniqueIndex("push_subscriptions_endpoint_unique").on(t.endpoint),
+  index("idx_push_subscriptions_user_id").on(t.userId),
+]);

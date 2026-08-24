@@ -1,4 +1,5 @@
 ﻿// Test setup file for jsdom environment
+import { vi } from 'vitest';
 import '@testing-library/jest-dom';
 
 // Mock window.matchMedia

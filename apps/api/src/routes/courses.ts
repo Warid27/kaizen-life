@@ -1,50 +1,61 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { Bindings, AppDb } from "../db/client";
-import { courses, courseSchedule } from "../db/schema";
+import { courses, courseSchedule, semesters } from "../db/schema";
+import {
+  CreateCourseSchema,
+  UpdateCourseSchema,
+  CreateScheduleSchema,
+  UpdateScheduleSchema,
+} from "@kaizenlife/shared";
 import { eq, and, isNull, asc } from "drizzle-orm";
-import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
+import { apiError, notFound, validationHook } from "../lib/api";
 
-const coursesRouter = new Hono<{ Bindings: Bindings; Variables: { db: AppDb } }>();
+type RouteEnv = { Bindings: Bindings; Variables: { db: AppDb; userId: string } };
 
-// Hardcoded user for now (no auth middleware yet)
-const USER_ID = "default-user";
+const coursesRouter = new Hono<RouteEnv>();
 
-// ─── Zod Schemas ────────────────────────────────────────────────────────────
+// BL18: a course may only reference a semester that exists, belongs to the
+// requesting user, and has not been soft-deleted.
+async function assertSemesterExists(
+  c: Context<RouteEnv>,
+  db: AppDb,
+  userId: string,
+  semesterId: string,
+): Promise<Response | null> {
+  const parent = await db
+    .select({ id: semesters.id })
+    .from(semesters)
+    .where(
+      and(
+        eq(semesters.id, semesterId),
+        eq(semesters.userId, userId),
+        isNull(semesters.deletedAt),
+      ),
+    )
+    .get();
 
-const CreateCourseSchema = z
-  .object({
-    semesterId: z.string().min(1),
-    name: z.string().min(1).max(200),
-    code: z.string().max(50).nullable().optional(),
-    lecturer: z.string().max(200).nullable().optional(),
-    room: z.string().max(100).nullable().optional(),
-    color: z.string().max(20).nullable().optional(),
-  })
-  .strict();
-
-const UpdateCourseSchema = CreateCourseSchema.partial().strict();
-
-const CreateScheduleSchema = z
-  .object({
-    courseId: z.string().min(1),
-    dayOfWeek: z.number().int().min(0).max(6),
-    startTime: z.string().regex(/^\d{2}:\d{2}$/),
-    endTime: z.string().regex(/^\d{2}:\d{2}$/),
-    room: z.string().max(100).nullable().optional(),
-  })
-  .strict();
-
-const UpdateScheduleSchema = CreateScheduleSchema.partial().strict();
+  if (!parent) {
+    return apiError(
+      c,
+      400,
+      "VALIDATION_ERROR",
+      `Semester ${semesterId} does not exist`,
+    );
+  }
+  return null;
+}
 
 // ─── Courses CRUD ───────────────────────────────────────────────────────────
 
 // GET /courses — list all courses for user, optional ?semesterId=
 coursesRouter.get("/courses", async (c) => {
   const db = c.get("db");
+  const userId = c.get("userId");
   const semesterId = c.req.query("semesterId");
 
-  const conditions = [eq(courses.userId, USER_ID), isNull(courses.deletedAt)];
+  const conditions = [eq(courses.userId, userId), isNull(courses.deletedAt)];
   if (semesterId) conditions.push(eq(courses.semesterId, semesterId));
 
   const rows = await db
@@ -60,18 +71,19 @@ coursesRouter.get("/courses", async (c) => {
 // GET /courses/:id
 coursesRouter.get("/courses/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const row = await db
     .select()
     .from(courses)
     .where(
-      and(eq(courses.id, id), eq(courses.userId, USER_ID), isNull(courses.deletedAt)),
+      and(eq(courses.id, id), eq(courses.userId, userId), isNull(courses.deletedAt)),
     )
     .get();
 
   if (!row) {
-    return c.json({ error: "Course not found" }, 404);
+    return notFound(c, "Course");
   }
 
   return c.json(row);
@@ -80,17 +92,16 @@ coursesRouter.get("/courses/:id", async (c) => {
 // POST /courses
 coursesRouter.post(
   "/courses",
-  zValidator("json", CreateCourseSchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Validation failed", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("json", CreateCourseSchema, validationHook),
   async (c) => {
     const db = c.get("db");
+    const userId = c.get("userId");
     const data = c.req.valid("json");
+
+    // BL18: dangling semester references used to create orphan courses.
+    const refCheck = await assertSemesterExists(c, db, userId, data.semesterId);
+    if (refCheck) return refCheck;
+
     const now = Math.floor(Date.now() / 1000);
     const id = crypto.randomUUID();
 
@@ -98,7 +109,7 @@ coursesRouter.post(
       .insert(courses)
       .values({
         id,
-        userId: USER_ID,
+        userId,
         semesterId: data.semesterId,
         name: data.name,
         code: data.code ?? null,
@@ -118,17 +129,11 @@ coursesRouter.post(
 // PATCH /courses/:id
 coursesRouter.patch(
   "/courses/:id",
-  zValidator("json", UpdateCourseSchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Validation failed", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("json", UpdateCourseSchema, validationHook),
   async (c) => {
     const db = c.get("db");
-    const id = c.req.param("id");
+    const userId = c.get("userId");
+    const id = String(c.req.param("id"));
     const data = c.req.valid("json");
 
     const existing = await db
@@ -137,14 +142,20 @@ coursesRouter.patch(
       .where(
         and(
           eq(courses.id, id),
-          eq(courses.userId, USER_ID),
+          eq(courses.userId, userId),
           isNull(courses.deletedAt),
         ),
       )
       .get();
 
     if (!existing) {
-      return c.json({ error: "Course not found" }, 404);
+      return notFound(c, "Course");
+    }
+
+    // BL18: validate the target semester when the course is being moved.
+    if (data.semesterId !== undefined) {
+      const refCheck = await assertSemesterExists(c, db, userId, data.semesterId);
+      if (refCheck) return refCheck;
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -157,10 +168,17 @@ coursesRouter.patch(
     if (data.room !== undefined) fieldsToUpdate.room = data.room ?? null;
     if (data.color !== undefined) fieldsToUpdate.color = data.color ?? null;
 
+    // B5: keep ownership + soft-delete guards on the UPDATE itself.
     const updated = await db
       .update(courses)
       .set(fieldsToUpdate)
-      .where(eq(courses.id, id))
+      .where(
+        and(
+          eq(courses.id, id),
+          eq(courses.userId, userId),
+          isNull(courses.deletedAt),
+        ),
+      )
       .returning()
       .get();
 
@@ -171,7 +189,8 @@ coursesRouter.patch(
 // DELETE /courses/:id (soft delete)
 coursesRouter.delete("/courses/:id", async (c) => {
   const db = c.get("db");
-  const id = c.req.param("id");
+  const userId = c.get("userId");
+  const id = String(c.req.param("id"));
 
   const existing = await db
     .select()
@@ -179,20 +198,27 @@ coursesRouter.delete("/courses/:id", async (c) => {
     .where(
       and(
         eq(courses.id, id),
-        eq(courses.userId, USER_ID),
+        eq(courses.userId, userId),
         isNull(courses.deletedAt),
       ),
     )
     .get();
 
   if (!existing) {
-    return c.json({ error: "Course not found" }, 404);
+    return notFound(c, "Course");
   }
 
   const now = Math.floor(Date.now() / 1000);
+  // B5: guard the DELETE as well as the preceding SELECT.
   await db.update(courses)
     .set({ deletedAt: now, updatedAt: now })
-    .where(eq(courses.id, id))
+    .where(
+      and(
+        eq(courses.id, id),
+        eq(courses.userId, userId),
+        isNull(courses.deletedAt),
+      ),
+    )
     .run();
 
   return c.json({ success: true });
@@ -203,14 +229,15 @@ coursesRouter.delete("/courses/:id", async (c) => {
 // GET /courses/:courseId/schedules — list schedules for a course
 coursesRouter.get("/courses/:courseId/schedules", async (c) => {
   const db = c.get("db");
-  const courseId = c.req.param("courseId");
+  const userId = c.get("userId");
+  const courseId = String(c.req.param("courseId"));
 
   const rows = await db
     .select()
     .from(courseSchedule)
     .where(
       and(
-        eq(courseSchedule.userId, USER_ID),
+        eq(courseSchedule.userId, userId),
         eq(courseSchedule.courseId, courseId),
         isNull(courseSchedule.deletedAt),
       ),
@@ -224,24 +251,20 @@ coursesRouter.get("/courses/:courseId/schedules", async (c) => {
 // POST /courses/:courseId/schedules
 coursesRouter.post(
   "/courses/:courseId/schedules",
-  zValidator("json", CreateScheduleSchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Validation failed", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("json", CreateScheduleSchema, validationHook),
   async (c) => {
     const db = c.get("db");
-    const courseId = c.req.param("courseId");
+    const userId = c.get("userId");
+    const courseId = String(c.req.param("courseId"));
     const data = c.req.valid("json");
 
     // Ensure courseId in body matches the URL param
     if (data.courseId !== courseId) {
-      return c.json(
-        { error: "courseId in body must match the URL parameter" },
+      return apiError(
+        c,
         400,
+        "VALIDATION_ERROR",
+        "courseId in body must match the URL parameter",
       );
     }
 
@@ -252,7 +275,7 @@ coursesRouter.post(
       .insert(courseSchedule)
       .values({
         id,
-        userId: USER_ID,
+        userId,
         courseId,
         dayOfWeek: data.dayOfWeek,
         startTime: data.startTime,
@@ -271,17 +294,11 @@ coursesRouter.post(
 // PATCH /courses/schedules/:scheduleId
 coursesRouter.patch(
   "/courses/schedules/:scheduleId",
-  zValidator("json", UpdateScheduleSchema, (result, c) => {
-    if (!result.success) {
-      return c.json(
-        { error: "Validation failed", details: result.error.flatten() },
-        400,
-      );
-    }
-  }),
+  zValidator("json", UpdateScheduleSchema, validationHook),
   async (c) => {
     const db = c.get("db");
-    const scheduleId = c.req.param("scheduleId");
+    const userId = c.get("userId");
+    const scheduleId = String(c.req.param("scheduleId"));
     const data = c.req.valid("json");
 
     const existing = await db
@@ -290,14 +307,14 @@ coursesRouter.patch(
       .where(
         and(
           eq(courseSchedule.id, scheduleId),
-          eq(courseSchedule.userId, USER_ID),
+          eq(courseSchedule.userId, userId),
           isNull(courseSchedule.deletedAt),
         ),
       )
       .get();
 
     if (!existing) {
-      return c.json({ error: "Schedule not found" }, 404);
+      return notFound(c, "Schedule");
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -309,10 +326,17 @@ coursesRouter.patch(
     if (data.endTime !== undefined) fieldsToUpdate.endTime = data.endTime;
     if (data.room !== undefined) fieldsToUpdate.room = data.room ?? null;
 
+    // B5: keep ownership + soft-delete guards on the UPDATE itself.
     const updated = await db
       .update(courseSchedule)
       .set(fieldsToUpdate)
-      .where(eq(courseSchedule.id, scheduleId))
+      .where(
+        and(
+          eq(courseSchedule.id, scheduleId),
+          eq(courseSchedule.userId, userId),
+          isNull(courseSchedule.deletedAt),
+        ),
+      )
       .returning()
       .get();
 
@@ -323,7 +347,8 @@ coursesRouter.patch(
 // DELETE /courses/schedules/:scheduleId (soft delete)
 coursesRouter.delete("/courses/schedules/:scheduleId", async (c) => {
   const db = c.get("db");
-  const scheduleId = c.req.param("scheduleId");
+  const userId = c.get("userId");
+  const scheduleId = String(c.req.param("scheduleId"));
 
   const existing = await db
     .select()
@@ -331,20 +356,27 @@ coursesRouter.delete("/courses/schedules/:scheduleId", async (c) => {
     .where(
       and(
         eq(courseSchedule.id, scheduleId),
-        eq(courseSchedule.userId, USER_ID),
+        eq(courseSchedule.userId, userId),
         isNull(courseSchedule.deletedAt),
       ),
     )
     .get();
 
   if (!existing) {
-    return c.json({ error: "Schedule not found" }, 404);
+    return notFound(c, "Schedule");
   }
 
   const now = Math.floor(Date.now() / 1000);
+  // B5: guard the DELETE as well as the preceding SELECT.
   await db.update(courseSchedule)
     .set({ deletedAt: now, updatedAt: now })
-    .where(eq(courseSchedule.id, scheduleId))
+    .where(
+      and(
+        eq(courseSchedule.id, scheduleId),
+        eq(courseSchedule.userId, userId),
+        isNull(courseSchedule.deletedAt),
+      ),
+    )
     .run();
 
   return c.json({ success: true });
