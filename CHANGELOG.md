@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ConfirmDialog` (`components/ui/confirm-dialog.tsx`): themed, keyboard-accessible destructive-action confirmation (focuses Cancel first, Enter confirms, Escape cancels, loading state); replaced all 9 native `confirm()` call sites across Planner, Habits, College, and Work
 - Search hardening: `/api/search` now scopes per table with `LIMIT 20`, escapes LIKE wildcards, and filters by `userId`
 
+### Security (auth groundwork)
+- Every UPDATE/DELETE now re-checks `userId` on the write itself (defense-in-depth): the last unguarded writes — monthly-review upsert/auto-summary regeneration (`reviews.ts`) and the habit-log upsert (`habits.ts`) — previously trusted an upstream SELECT for scoping; a future edit to that SELECT would have silently opened a cross-user write path
+- `users.email` now has a partial unique index (`uniq_users_email_live`, live rows only — migration 0004), so a soft-deleted account's address can be reused while one live account per email is enforced; prerequisite for real login
+
 ### Changed
 - Dialog primitive hardened for all forms: Escape-to-close, Tab focus trap with focus restoration on close, `role="dialog"` + `aria-modal` + `aria-labelledby`, background scroll lock, and nested-dialog stacking (only the topmost dialog responds to Escape/Tab)
 - Quick Capture fixed end-to-end: the command palette now always offers "Add task: …" for any typed query (previously showed "No results found" with no way to capture), creates tasks via the previously-unused `POST /api/capture` endpoint defaulting to today, closes with a success toast; dead `/planner?capture=…` navigation removed

@@ -160,7 +160,11 @@ async function upsertReview(
         deletedAt: null,
         updatedAt: now,
       })
-      .where(eq(monthlyReviews.id, existing.id))
+      // Defense-in-depth: the write re-checks ownership even though the
+      // SELECT above already scoped `existing` by userId.
+      .where(
+        and(eq(monthlyReviews.id, existing.id), eq(monthlyReviews.userId, userId)),
+      )
       .returning()
       .get();
     return Response.json({ data: updated });
@@ -478,7 +482,10 @@ reviewsRouter.post("/reviews/generate/:year/:month", async (c) => {
         deletedAt: null,
         updatedAt: now,
       })
-      .where(eq(monthlyReviews.id, existing.id))
+      // Defense-in-depth: re-check ownership on the write itself.
+      .where(
+        and(eq(monthlyReviews.id, existing.id), eq(monthlyReviews.userId, userId)),
+      )
       .returning()
       .get();
   } else {

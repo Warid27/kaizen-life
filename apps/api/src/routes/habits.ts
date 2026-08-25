@@ -300,7 +300,8 @@ habitsRouter.post("/habits/:id/log", async (c) => {
           note: note ?? existing.note,
           updatedAt: now,
         })
-        .where(eq(habitLogs.id, existing.id))
+        // Defense-in-depth: re-check ownership on the write itself.
+        .where(and(eq(habitLogs.id, existing.id), eq(habitLogs.userId, userId)))
         .returning()
         .get();
     } else if (increment > 0) {

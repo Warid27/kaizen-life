@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `uniq_users_email_live` ON `users` (`email`) WHERE deleted_at IS NULL;

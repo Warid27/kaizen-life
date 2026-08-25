@@ -12,15 +12,24 @@ const liveRowsOnly = sql`deleted_at IS NULL`;
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------
-export const users = sqliteTable("users", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  email: text("email"),
-  timezone: text("timezone").notNull().default("Asia/Jakarta"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-  deletedAt: integer("deleted_at"),
-});
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email"),
+    timezone: text("timezone").notNull().default("Asia/Jakarta"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    deletedAt: integer("deleted_at"),
+  },
+  (t) => [
+    // Auth groundwork: one live account per email. Partial (live rows only)
+    // so a soft-deleted user's address can be reused; multiple NULLs are
+    // fine in SQLite unique indexes.
+    uniqueIndex("uniq_users_email_live").on(t.email).where(liveRowsOnly),
+  ],
+);
 
 // ---------------------------------------------------------------------------
 // Tasks (universal work-item table â€” planner, work, college)
@@ -492,7 +501,7 @@ export const reminders = sqliteTable("reminders", {
 export const pushSubscriptions = sqliteTable("push_subscriptions", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
-  /** Push-service endpoint URL — globally unique per browser subscription. */
+  /** Push-service endpoint URL ï¿½ globally unique per browser subscription. */
   endpoint: text("endpoint").notNull(),
   p256dh: text("p256dh").notNull(),
   auth: text("auth").notNull(),

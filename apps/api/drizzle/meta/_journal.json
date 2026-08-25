@@ -29,6 +29,13 @@
       "when": 1787590949048,
       "tag": "0003_add_push_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1787626858822,
+      "tag": "0004_open_blazing_skull",
+      "breakpoints": true
     }
   ]
 }
