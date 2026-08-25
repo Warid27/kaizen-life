@@ -10,6 +10,8 @@ import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { toast } from '@/components/ui/toast';
 import {
   Plus,
   GripVertical,
@@ -32,10 +34,26 @@ import type { Task, CreateTask, TaskPriority, TaskStatus } from '@kaizenlife/sha
 const HOURS = Array.from({ length: 18 }, (_, i) => i + 5); // 5 AM to 10 PM
 
 const PRIORITY_CONFIG: Record<TaskPriority, { color: string; label: string }> = {
-  low: { color: 'bg-sky-100 text-sky-700 border-sky-200', label: 'Low' },
-  medium: { color: 'bg-amber-100 text-amber-700 border-amber-200', label: 'Medium' },
-  high: { color: 'bg-orange-100 text-orange-700 border-orange-200', label: 'High' },
-  urgent: { color: 'bg-red-100 text-red-700 border-red-200', label: 'Urgent' },
+  low: {
+    color:
+      'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-900',
+    label: 'Low',
+  },
+  medium: {
+    color:
+      'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-900',
+    label: 'Medium',
+  },
+  high: {
+    color:
+      'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/60 dark:text-orange-300 dark:border-orange-900',
+    label: 'High',
+  },
+  urgent: {
+    color:
+      'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/60 dark:text-red-300 dark:border-red-900',
+    label: 'Urgent',
+  },
 };
 
 const STATUS_ICONS: Record<TaskStatus, typeof Circle> = {
@@ -62,6 +80,7 @@ function PlannerContent() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [draggedTask, setDraggedTask] = useState<Task | null>(null);
+  const [deletingTask, setDeletingTask] = useState<Task | null>(null);
 
   const { data: tasks, isLoading } = useTasks({ date: selectedDate });
 
@@ -111,10 +130,18 @@ function PlannerContent() {
     setFormOpen(true);
   };
 
+  const handleDeleteRequest = (task: Task) => {
+    setDeletingTask(task);
+  };
+
   const handleDelete = (id: string) => {
-    if (confirm('Delete this task?')) {
-      deleteMut.mutate(id);
-    }
+    deleteMut.mutate(id, {
+      onSuccess: () => {
+        setDeletingTask(null);
+        toast.success('Task deleted');
+      },
+      onError: () => setDeletingTask(null),
+    });
   };
 
   const handleStatusToggle = (task: Task) => {
@@ -131,10 +158,20 @@ function PlannerContent() {
     if (editingTask) {
       updateMut.mutate(
         { id: editingTask.id, data },
-        { onSuccess: () => setFormOpen(false) },
+        {
+          onSuccess: () => {
+            setFormOpen(false);
+            toast.success('Task updated');
+          },
+        },
       );
     } else {
-      createMut.mutate(data, { onSuccess: () => setFormOpen(false) });
+      createMut.mutate(data, {
+        onSuccess: () => {
+          setFormOpen(false);
+          toast.success('Task created');
+        },
+      });
     }
   };
 
@@ -274,7 +311,7 @@ function PlannerContent() {
                           key={task.id}
                           task={task}
                           onEdit={handleEdit}
-                          onDelete={handleDelete}
+                          onDelete={handleDeleteRequest}
                           onStatusToggle={handleStatusToggle}
                           onDragStart={handleDragStart}
                           onDragEnd={handleDragEnd}
@@ -301,7 +338,7 @@ function PlannerContent() {
                 key={task.id}
                 task={task}
                 onEdit={handleEdit}
-                onDelete={handleDelete}
+                onDelete={handleDeleteRequest}
                 onStatusToggle={handleStatusToggle}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
@@ -320,6 +357,19 @@ function PlannerContent() {
         onSave={handleSave}
         isSaving={createMut.isPending || updateMut.isPending}
       />
+
+      {/* Delete Confirmation */}
+      <ConfirmDialog
+        open={deletingTask !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingTask(null);
+        }}
+        title="Delete this task?"
+        description={deletingTask ? `"${deletingTask.title}" will be permanently removed.` : undefined}
+        confirmLabel="Delete"
+        loading={deleteMut.isPending}
+        onConfirm={() => deletingTask && handleDelete(deletingTask.id)}
+      />
     </div>
   );
 }
@@ -329,7 +379,7 @@ function PlannerContent() {
 interface PlannerTaskProps {
   task: Task;
   onEdit: (task: Task) => void;
-  onDelete: (id: string) => void;
+  onDelete: (task: Task) => void;
   onStatusToggle: (task: Task) => void;
   onDragStart: (task: Task) => void;
   onDragEnd: () => void;
@@ -377,14 +427,21 @@ function PlannerTask({
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              'truncate text-sm font-medium',
-              done ? 'text-muted-foreground line-through' : 'text-foreground',
-            )}
+          <button
+            type="button"
+            onClick={() => onEdit(task)}
+            className="min-w-0 flex-1 text-left"
+            aria-label={`Edit task: ${task.title}`}
           >
-            {task.title}
-          </span>
+            <span
+              className={cn(
+                'block truncate text-sm font-medium',
+                done ? 'text-muted-foreground line-through' : 'text-foreground',
+              )}
+            >
+              {task.title}
+            </span>
+          </button>
           <span
             className={cn(
               'shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium',
@@ -404,17 +461,19 @@ function PlannerTask({
         )}
       </div>
 
-      {/* Actions */}
-      <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+      {/* Actions — always visible on touch devices (no hover available there) */}
+      <div className="flex gap-0.5 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
         <button
           onClick={() => onEdit(task)}
           className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-label={`Edit task: ${task.title}`}
         >
           <Pencil className="h-3 w-3" />
         </button>
         <button
-          onClick={() => onDelete(task.id)}
+          onClick={() => onDelete(task)}
           className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          aria-label={`Delete task: ${task.title}`}
         >
           <Trash2 className="h-3 w-3" />
         </button>

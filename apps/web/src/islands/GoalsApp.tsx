@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { toast } from '@/components/ui/toast';
 import {
   Target,
   Plus,
@@ -49,20 +50,20 @@ const LEVEL_META: Record<
 > = {
   annual: {
     label: 'Annual',
-    color: 'text-violet-700',
-    bg: 'bg-violet-50',
+    color: 'text-violet-700 dark:text-violet-300',
+    bg: 'bg-violet-100 dark:bg-violet-950',
     icon: '🏆',
   },
   monthly: {
     label: 'Monthly',
-    color: 'text-blue-700',
-    bg: 'bg-blue-50',
+    color: 'text-blue-700 dark:text-blue-300',
+    bg: 'bg-blue-100 dark:bg-blue-950',
     icon: '📅',
   },
   weekly: {
     label: 'Weekly',
-    color: 'text-emerald-700',
-    bg: 'bg-emerald-50',
+    color: 'text-emerald-700 dark:text-emerald-300',
+    bg: 'bg-emerald-100 dark:bg-emerald-950',
     icon: '⚡',
   },
 };
@@ -159,7 +160,12 @@ function GoalsContent() {
         periodStart: `${new Date().getFullYear()}-01-01`,
         periodEnd: `${new Date().getFullYear()}-12-31`,
       },
-      { onSuccess: () => setFormOpen(false) },
+      {
+        onSuccess: () => {
+          setFormOpen(false);
+          toast.success('Goal created');
+        },
+      },
     );
   };
 
@@ -195,8 +201,8 @@ function GoalsContent() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card>
           <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-50">
-              <Target className="h-5 w-5 text-violet-600" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-950">
+              <Target className="h-5 w-5 text-violet-600 dark:text-violet-400" />
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Active Goals</p>
@@ -206,8 +212,8 @@ function GoalsContent() {
         </Card>
         <Card>
           <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50">
-              <Trophy className="h-5 w-5 text-emerald-600" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-950">
+              <Trophy className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Completed</p>
@@ -217,8 +223,8 @@ function GoalsContent() {
         </Card>
         <Card>
           <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50">
-              <Flame className="h-5 w-5 text-blue-600" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-950">
+              <Flame className="h-5 w-5 text-blue-600 dark:text-blue-400" />
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Overall Progress</p>
@@ -318,7 +324,8 @@ function GoalNode({
       <Card
         className={cn(
           'transition-colors',
-          isCompleted && 'border-emerald-200 bg-emerald-50/30',
+          isCompleted &&
+            'border-emerald-200 bg-emerald-50/30 dark:border-emerald-900 dark:bg-emerald-950/30',
         )}
       >
         <CardContent className="p-4">

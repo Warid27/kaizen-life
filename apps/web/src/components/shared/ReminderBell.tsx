@@ -4,7 +4,7 @@ import { useReminders, type ReminderItem } from '@/queries/settings';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { Bell, Clock, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Bell, Clock, AlertTriangle, CheckCircle, ChevronRight } from 'lucide-react';
 
 // ─── Default export (mountable React island) ──────────────────────────────────
 
@@ -17,6 +17,14 @@ export default function ReminderBellMount() {
 }
 
 // ─── Reminder Bell Component ──────────────────────────────────────────────────
+
+/** Where each reminder type leads — lets users act on a reminder directly. */
+const REMINDER_HREF: Record<string, string> = {
+  habit: '/life/habits',
+  deadline: '/planner',
+  followup: '/work/clients',
+  meeting: '/work/meetings',
+};
 
 function ReminderBell() {
   const [open, setOpen] = useState(false);
@@ -111,6 +119,7 @@ function ReminderBell() {
                 <ReminderItemRow
                   key={`${r.type}:${r.title}:${r.date}`}
                   reminder={r}
+                  onNavigate={() => setOpen(false)}
                 />
               ))
             )}
@@ -123,14 +132,17 @@ function ReminderBell() {
 
 // ─── Reminder Item Row ────────────────────────────────────────────────────────
 
-function ReminderItemRow({ reminder }: { reminder: ReminderItem }) {
-  return (
-    <div
-      className={cn(
-        'flex w-full items-start gap-3 px-4 py-2.5',
-        reminder.priority === 'urgent' && 'bg-destructive/5',
-      )}
-    >
+function ReminderItemRow({
+  reminder,
+  onNavigate,
+}: {
+  reminder: ReminderItem;
+  onNavigate: () => void;
+}) {
+  const href = REMINDER_HREF[reminder.type];
+
+  const content = (
+    <>
       <div className="shrink-0 pt-0.5">
         {reminder.priority === 'urgent' ? (
           <AlertTriangle className="h-4 w-4 text-destructive" />
@@ -145,6 +157,35 @@ function ReminderItemRow({ reminder }: { reminder: ReminderItem }) {
           <span className="ml-1.5 capitalize">· {reminder.type}</span>
         </p>
       </div>
-    </div>
+      {href && <ChevronRight className="h-3.5 w-3.5 shrink-0 self-center text-muted-foreground/50" />}
+    </>
+  );
+
+  // Types with a known destination are actionable links; unknown types stay
+  // plain rows instead of dead links.
+  if (!href) {
+    return (
+      <div
+        className={cn(
+          'flex w-full items-start gap-3 px-4 py-2.5',
+          reminder.priority === 'urgent' && 'bg-destructive/5',
+        )}
+      >
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <a
+      href={href}
+      onClick={onNavigate}
+      className={cn(
+        'flex w-full items-start gap-3 px-4 py-2.5 transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none',
+        reminder.priority === 'urgent' && 'bg-destructive/5',
+      )}
+    >
+      {content}
+    </a>
   );
 }

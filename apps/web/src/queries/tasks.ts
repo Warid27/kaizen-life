@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api-client';
-import type { Task, CreateTask, UpdateTask, TaskFilter } from '@kaizenlife/shared';
+import type { Task, CreateTask, UpdateTask, TaskFilter, QuickCapture } from '@kaizenlife/shared';
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
 
@@ -67,6 +67,21 @@ export function useDeleteTask() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiDelete<{ success: boolean }>(`/api/tasks/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: taskKeys.all });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+/**
+ * Quick Capture — create a task from just a title (command palette).
+ * Uses the dedicated POST /api/capture endpoint; defaults to today.
+ */
+export function useQuickCapture() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: QuickCapture) => apiPost<Task>('/api/capture', data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: taskKeys.all });
       qc.invalidateQueries({ queryKey: ['dashboard'] });

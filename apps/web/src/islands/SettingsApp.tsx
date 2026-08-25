@@ -271,7 +271,7 @@ function ProfileCard() {
               ) : (
                 <p
                   role="status"
-                  className="flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700"
+                  className="flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300"
                 >
                   <Check className="h-4 w-4" /> Saved!
                 </p>

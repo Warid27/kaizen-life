@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUIStore, todayStr, shiftDays } from '@/stores/ui';
+import { toast } from '@/components/ui/toast';
 import type { Checkin, UpsertCheckin } from '@kaizenlife/shared';
 
 // ─── Default export ───────────────────────────────────────────────────────────
@@ -126,7 +127,13 @@ function CheckinContent() {
       stress: stress,
       note: note || null,
     };
-    upsertMut.mutate({ date: selectedDate, data });
+    upsertMut.mutate(
+      { date: selectedDate, data },
+      {
+        onSuccess: () =>
+          toast.success(isSaved ? 'Check-in updated' : 'Check-in saved'),
+      },
+    );
   };
 
   const isSaved = currentCheckin !== null;
@@ -153,6 +160,7 @@ function CheckinContent() {
       <div className="flex items-center gap-3">
         <button
           onClick={() => navigateDate(-1)}
+          aria-label="Previous day"
           className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -160,6 +168,7 @@ function CheckinContent() {
         <span className="text-sm font-medium text-foreground">Select Date</span>
         <button
           onClick={() => navigateDate(1)}
+          aria-label="Next day"
           className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <ArrowRight className="h-4 w-4" />
@@ -239,11 +248,13 @@ function CheckinContent() {
                       <button
                         key={v}
                         onClick={() => setSleepQuality(v)}
+                        aria-label={`Sleep quality: ${v} out of 5`}
+                        aria-pressed={sleepQuality === v}
                         className={cn(
                           'h-9 w-9 rounded-lg border text-sm font-medium transition-all',
                           sleepQuality === v
                             ? 'border-indigo-500 bg-indigo-500 text-white shadow-sm'
-                            : 'border-border hover:border-indigo-300 hover:bg-indigo-50',
+                            : 'border-border hover:border-indigo-300 hover:bg-indigo-50 dark:hover:border-indigo-700 dark:hover:bg-indigo-950',
                         )}
                       >
                         {v}
@@ -410,6 +421,8 @@ function RatingSlider({
           <button
             key={v}
             onClick={() => onChange(v === value ? null : v)}
+            aria-label={`${label}: ${v} out of ${max}`}
+            aria-pressed={value === v}
             className={cn(
               'h-8 flex-1 rounded-md border text-xs font-medium transition-all',
               value === v

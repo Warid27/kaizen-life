@@ -288,7 +288,7 @@ function ReviewContent() {
           className={
             saveError
               ? 'flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive'
-              : 'flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700'
+              : 'flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300'
           }
           role={saveError ? 'alert' : 'status'}
         >

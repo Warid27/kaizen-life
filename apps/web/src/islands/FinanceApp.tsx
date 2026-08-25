@@ -15,6 +15,7 @@ import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { toast } from '@/components/ui/toast';
 import {
   TrendingUp,
   TrendingDown,
@@ -175,7 +176,10 @@ function FinanceContent() {
         note: data.note,
       },
       {
-        onSuccess: () => setFormOpen(false),
+        onSuccess: () => {
+          setFormOpen(false);
+          toast.success(formType === 'income' ? 'Income added' : 'Expense added');
+        },
         onError: (err) => {
           setFormError(
             err instanceof Error && err.message
@@ -243,8 +247,9 @@ function FinanceContent() {
           <SummaryCard
             label="Net"
             value={formatCents(summary?.netCents ?? 0, summary?.primaryCurrency)}
-            icon={<DollarSign className="h-4 w-4 text-primary" />}
+            icon={<DollarSign className="h-4 w-4 text-sky-600 dark:text-sky-400" />}
             trend={(summary?.netCents ?? 0) >= 0 ? 'up' : 'down'}
+            tone="neutral"
           />
         </div>
       )}
@@ -420,19 +425,27 @@ function SummaryCard({
   value,
   icon,
   trend,
+  tone = 'auto',
 }: {
   label: string;
   value: string;
   icon: React.ReactNode;
   trend: 'up' | 'down';
+  /** Explicit icon tint; defaults to the trend direction. */
+  tone?: 'up' | 'down' | 'neutral' | 'auto';
 }) {
+  const effectiveTone = tone === 'auto' ? trend : tone;
   return (
     <Card>
       <CardContent className="flex items-center gap-4 p-4">
         <div
           className={cn(
             'flex h-10 w-10 items-center justify-center rounded-lg',
-            trend === 'up' ? 'bg-emerald-50' : 'bg-red-50',
+            effectiveTone === 'up'
+              ? 'bg-emerald-100 dark:bg-emerald-950'
+              : effectiveTone === 'down'
+                ? 'bg-red-100 dark:bg-red-950'
+                : 'bg-sky-100 dark:bg-sky-950',
           )}
         >
           {icon}
@@ -455,7 +468,9 @@ function TransactionRow({ transaction: tx }: { transaction: Transaction }) {
       <div
         className={cn(
           'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-          isIncome ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600',
+          isIncome
+            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400'
+            : 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400',
         )}
       >
         {isIncome ? (

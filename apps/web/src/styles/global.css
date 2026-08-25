@@ -64,4 +64,9 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Modal dialogs: freeze the app scroll container behind them (the shell
+     scrolls inside <main>, not on body). */
+  body.dialog-open main {
+    overflow: hidden;
+  }
 }

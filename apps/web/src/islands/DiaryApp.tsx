@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUIStore, todayStr, shiftDays } from '@/stores/ui';
+import { toast } from '@/components/ui/toast';
 import type { DiaryEntry, UpsertDiaryEntry } from '@kaizenlife/shared';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -113,7 +114,12 @@ function DiaryContent() {
       tomorrowFocus: tomorrowFocus || null,
       freeText: freeText || null,
     };
-    upsertMut.mutate({ date: selectedDate, data });
+    upsertMut.mutate(
+      { date: selectedDate, data },
+      {
+        onSuccess: () => toast.success(isSaved ? 'Entry updated' : 'Entry saved'),
+      },
+    );
   };
 
   const isSaved = currentEntry !== null;
@@ -140,6 +146,7 @@ function DiaryContent() {
       <div className="flex items-center gap-3">
         <button
           onClick={() => navigateDate(-1)}
+          aria-label="Previous day"
           className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -150,6 +157,7 @@ function DiaryContent() {
         </span>
         <button
           onClick={() => navigateDate(1)}
+          aria-label="Next day"
           className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <ArrowRight className="h-4 w-4" />

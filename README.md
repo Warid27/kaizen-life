@@ -41,6 +41,10 @@ bun install
 
 ### Development
 
+> **One-time setup:** copy `apps/api/.env.example` to `apps/api/.dev.vars`. Without the
+> `ENVIRONMENT=development` override, the local API runs with production CORS rules and
+> every browser request fails silently.
+
 Run the API and web app side by side (two terminals, or use the root scripts):
 
 ```bash

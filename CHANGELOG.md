@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Toast notification system (`components/ui/toast.tsx`): dependency-free success/error toasts with `aria-live` feedback, mounted once inside `QueryProvider` so every island inherits it; a global mutation `onError` surfaces every failed API write as a toast, so failed saves are never silent
+- `ConfirmDialog` (`components/ui/confirm-dialog.tsx`): themed, keyboard-accessible destructive-action confirmation (focuses Cancel first, Enter confirms, Escape cancels, loading state); replaced all 9 native `confirm()` call sites across Planner, Habits, College, and Work
+- Search hardening: `/api/search` now scopes per table with `LIMIT 20`, escapes LIKE wildcards, and filters by `userId`
+
+### Changed
+- Dialog primitive hardened for all forms: Escape-to-close, Tab focus trap with focus restoration on close, `role="dialog"` + `aria-modal` + `aria-labelledby`, background scroll lock, and nested-dialog stacking (only the topmost dialog responds to Escape/Tab)
+- Quick Capture fixed end-to-end: the command palette now always offers "Add task: …" for any typed query (previously showed "No results found" with no way to capture), creates tasks via the previously-unused `POST /api/capture` endpoint defaulting to today, closes with a success toast; dead `/planner?capture=…` navigation removed
+- Row actions (edit/delete) are now visible on touch devices via `@media(hover:hover)` instead of hover-only opacity — planner, habits, courses, assignments, standups, projects, clients, meetings
+- Dashboard shows an error banner with Retry on API failure instead of rendering "No tasks today" (indistinguishable from a genuinely empty day)
+- Team Performance page added to sidebar and command palette (the route existed but was unreachable)
+- Reminder bell items are actionable: each row links to its destination page (habits → Habits, deadlines → Planner, follow-ups → Clients, meetings → Meetings) and closes the dropdown on click
+- Mobile bottom nav: honest "Settings" label (was "More"), 44px+ touch targets, `aria-current="page"`
+- Success toasts across flows: tasks, habits, courses/assignments/semesters, standups, clients, follow-ups, meetings, action items, goals, check-in, diary, finance
+- Dark-mode contrast fixes: planner priority chips, finance transaction/summary icon chips, goals stat chips, habit/check-in hover flashes, review/settings success texts
+- Empty-state CTA on Habits ("Create your first habit")
+
+### Fixed
+- Command palette dead end: Enter on "No results found" silently discarded typed input; Quick Capture is the headline feature and now always works
+- Dialogs were keyboard-inaccessible: no Escape handling, no focus management, background scrollable behind modal (WCAG failure across 10+ forms)
+- Finance "Net" card icon invisible in dark mode (white-on-white)
+- A11y: accessible names added to date navigation arrows, rating-scale buttons (`aria-label` + `aria-pressed`), and all row action buttons
+- Local dev CORS trap: `wrangler.toml` ships `ENVIRONMENT=production`, so `wrangler dev` blocked `http://localhost:4321` and every browser API call failed silently; `.dev.vars` now overrides it for local dev, documented in new `apps/api/.env.example` and the README
+
+### Web Push (previously unreleased notes merged here)
 - Web Push notifications end-to-end (no Firebase dependency): dependency-free VAPID (RFC 8292) + `aes128gcm` (RFC 8291/8188) encryption over WebCrypto in `apps/api/src/lib/webpush.ts`, subscription endpoints (`GET /api/push/vapid-public-key`, upsert `POST /api/push/subscriptions`, scoped `DELETE /api/push/subscriptions`), `push_subscriptions` table (migration 0003), service-worker `push` / `notificationclick` handlers, and a Settings → Notifications enable/disable card
 - Cron dispatcher (`*/15 * * * *`) on the API worker: delivers due rows from the polymorphic `reminders` table and a once-daily ~08:00 local-time digest per user (scheduled habits not done + open tasks), pruning dead push endpoints automatically
 - Server-backed settings: `GET/PATCH /api/settings` (name/email/timezone with IANA validation) and `GET /api/export/json` full-data export

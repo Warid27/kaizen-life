@@ -28,6 +28,8 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { toast } from '@/components/ui/toast';
 import {
   Plus,
   Pencil,
@@ -111,6 +113,7 @@ function ScheduleView() {
   const [semesterFilter, setSemesterFilter] = useState<string>('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
+  const [deletingCourse, setDeletingCourse] = useState<Course | null>(null);
   const [selectedDay, setSelectedDay] = useState<number>(new Date().getDay());
 
   const { data: semesters } = useSemesters();
@@ -135,22 +138,40 @@ function ScheduleView() {
     setFormOpen(true);
   };
 
+  const handleDeleteRequest = (course: Course) => {
+    setDeletingCourse(course);
+  };
+
   const handleDelete = (id: string) => {
-    if (confirm('Delete this course and all its schedules?')) {
-      deleteCourseMut.mutate(id);
-    }
+    deleteCourseMut.mutate(id, {
+      onSuccess: () => {
+        setDeletingCourse(null);
+        toast.success('Course deleted');
+      },
+      onError: () => setDeletingCourse(null),
+    });
   };
 
   const handleSave = (data: { name: string; code: string; lecturer: string; room: string; color: string; semesterId: string }) => {
     if (editingCourse) {
       updateCourseMut.mutate(
         { id: editingCourse.id, data },
-        { onSuccess: () => setFormOpen(false) },
+        {
+          onSuccess: () => {
+            setFormOpen(false);
+            toast.success('Course updated');
+          },
+        },
       );
     } else {
       createCourseMut.mutate(
         { ...data, semesterId: data.semesterId || activeSemester?.id || '' },
-        { onSuccess: () => setFormOpen(false) },
+        {
+          onSuccess: () => {
+            setFormOpen(false);
+            toast.success('Course added');
+          },
+        },
       );
     }
   };
@@ -241,7 +262,7 @@ function ScheduleView() {
               key={course.id}
               course={course}
               onEdit={handleEdit}
-              onDelete={handleDelete}
+              onDelete={handleDeleteRequest}
             />
           ))
         )}
@@ -255,6 +276,23 @@ function ScheduleView() {
         semesters={semesters ?? []}
         onSave={handleSave}
         isSaving={createCourseMut.isPending || updateCourseMut.isPending}
+      />
+
+      {/* Delete Course Confirmation */}
+      <ConfirmDialog
+        open={deletingCourse !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingCourse(null);
+        }}
+        title="Delete this course?"
+        description={
+          deletingCourse
+            ? `"${deletingCourse.name}" and all its schedule entries will be permanently removed.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        loading={deleteCourseMut.isPending}
+        onConfirm={() => deletingCourse && handleDelete(deletingCourse.id)}
       />
     </div>
   );
@@ -316,7 +354,7 @@ function CourseCard({
 }: {
   course: Course;
   onEdit: (c: Course) => void;
-  onDelete: (id: string) => void;
+  onDelete: (course: Course) => void;
 }) {
   const { data: schedules } = useCourseSchedules(course.id);
 
@@ -347,17 +385,19 @@ function CourseCard({
             {scheduleText && <span className="truncate">{scheduleText}</span>}
           </div>
         </div>
-        {/* Actions */}
-        <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        {/* Actions — always visible on touch devices (no hover available there) */}
+        <div className="flex gap-1 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
           <button
             onClick={() => onEdit(course)}
             className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label={`Edit course: ${course.name}`}
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
           <button
-            onClick={() => onDelete(course.id)}
+            onClick={() => onDelete(course)}
             className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            aria-label={`Delete course: ${course.name}`}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -505,6 +545,7 @@ function AssignmentsView() {
   const [courseFilter, setCourseFilter] = useState<string>('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
+  const [deletingAssignment, setDeletingAssignment] = useState<Assignment | null>(null);
 
   const { data: courses } = useCourses();
   const { data: assignments, isLoading } = useAssignments(
@@ -534,21 +575,35 @@ function AssignmentsView() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Delete this assignment?')) {
-      deleteMut.mutate(id);
-    }
+    deleteMut.mutate(id, {
+      onSuccess: () => {
+        setDeletingAssignment(null);
+        toast.success('Assignment deleted');
+      },
+      onError: () => setDeletingAssignment(null),
+    });
   };
 
   const handleSave = (data: { courseId: string; title: string; description: string; dueDate: string; priority: string; status: string }) => {
     if (editingAssignment) {
       updateMut.mutate(
         { id: editingAssignment.id, data },
-        { onSuccess: () => setFormOpen(false) },
+        {
+          onSuccess: () => {
+            setFormOpen(false);
+            toast.success('Assignment updated');
+          },
+        },
       );
     } else {
       createMut.mutate(
         { ...data },
-        { onSuccess: () => setFormOpen(false) },
+        {
+          onSuccess: () => {
+            setFormOpen(false);
+            toast.success('Assignment added');
+          },
+        },
       );
     }
   };
@@ -702,17 +757,19 @@ function AssignmentsView() {
                     </Badge>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                  {/* Actions — always visible on touch devices (no hover available there) */}
+                  <div className="flex gap-1 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
                     <button
                       onClick={() => handleEdit(assignment)}
                       className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      aria-label={`Edit assignment: ${assignment.title}`}
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
                     <button
-                      onClick={() => handleDelete(assignment.id)}
+                      onClick={() => setDeletingAssignment(assignment)}
                       className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={`Delete assignment: ${assignment.title}`}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -732,6 +789,23 @@ function AssignmentsView() {
         courses={courses ?? []}
         onSave={handleSave}
         isSaving={createMut.isPending || updateMut.isPending}
+      />
+
+      {/* Delete Assignment Confirmation */}
+      <ConfirmDialog
+        open={deletingAssignment !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingAssignment(null);
+        }}
+        title="Delete this assignment?"
+        description={
+          deletingAssignment
+            ? `"${deletingAssignment.title}" will be permanently removed.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        loading={deleteMut.isPending}
+        onConfirm={() => deletingAssignment && handleDelete(deletingAssignment.id)}
       />
     </div>
   );
@@ -861,6 +935,7 @@ function SemesterView() {
   const [formOpen, setFormOpen] = useState(false);
   const [eventFormOpen, setEventFormOpen] = useState(false);
   const [editingSemester, setEditingSemester] = useState<Semester | null>(null);
+  const [deletingSemester, setDeletingSemester] = useState<Semester | null>(null);
   const [selectedSemesterId, setSelectedSemesterId] = useState<string>('');
 
   const { data: semesters, isLoading: semestersLoading } = useSemesters();
@@ -1082,10 +1157,9 @@ function SemesterView() {
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(`Delete semester "${s.name}"?`)) deleteSemesterMut.mutate(s.id);
-                        }}
+                        onClick={() => setDeletingSemester(s)}
                         className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        aria-label={`Delete semester: ${s.name}`}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -1113,6 +1187,33 @@ function SemesterView() {
         onOpenChange={setEventFormOpen}
         onSave={handleAddEvent}
         isSaving={createEventMut.isPending}
+      />
+
+      {/* Delete Semester Confirmation */}
+      <ConfirmDialog
+        open={deletingSemester !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingSemester(null);
+        }}
+        title="Delete this semester?"
+        description={
+          deletingSemester
+            ? `"${deletingSemester.name}" will be permanently removed.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        loading={deleteSemesterMut.isPending}
+        onConfirm={() => {
+          if (deletingSemester) {
+            deleteSemesterMut.mutate(deletingSemester.id, {
+              onSuccess: () => {
+                setDeletingSemester(null);
+                toast.success('Semester deleted');
+              },
+              onError: () => setDeletingSemester(null),
+            });
+          }
+        }}
       />
     </div>
   );

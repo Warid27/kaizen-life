@@ -36,6 +36,8 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { toast } from '@/components/ui/toast';
 import {
   Plus,
   Pencil,
@@ -148,6 +150,7 @@ function StandupView() {
   const { selectedDate } = useUIStore();
   const [formOpen, setFormOpen] = useState(false);
   const [teamFormOpen, setTeamFormOpen] = useState(false);
+  const [deletingStandup, setDeletingStandup] = useState<Standup | null>(null);
 
   const { data: standups, isLoading } = useStandups({ date: selectedDate });
   const { data: teamMembers } = useTeamMembers();
@@ -164,9 +167,13 @@ function StandupView() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Delete this standup entry?')) {
-      deleteStandupMut.mutate(id);
-    }
+    deleteStandupMut.mutate(id, {
+      onSuccess: () => {
+        setDeletingStandup(null);
+        toast.success('Standup entry deleted');
+      },
+      onError: () => setDeletingStandup(null),
+    });
   };
 
   return (
@@ -239,7 +246,14 @@ function StandupView() {
         open={formOpen}
         onOpenChange={setFormOpen}
         teamMembers={teamMembers ?? []}
-        onSave={(data) => createStandupMut.mutate(data, { onSuccess: () => setFormOpen(false) })}
+        onSave={(data) =>
+          createStandupMut.mutate(data, {
+            onSuccess: () => {
+              setFormOpen(false);
+              toast.success('Standup logged');
+            },
+          })
+        }
         isSaving={createStandupMut.isPending}
       />
 
@@ -247,8 +261,30 @@ function StandupView() {
       <TeamMemberFormDialog
         open={teamFormOpen}
         onOpenChange={setTeamFormOpen}
-        onSave={(data) => createTeamMemberMut.mutate({ ...data, userId: '' }, { onSuccess: () => setTeamFormOpen(false) })}
+        onSave={(data) =>
+          createTeamMemberMut.mutate(
+            { ...data, userId: '' },
+            {
+              onSuccess: () => {
+                setTeamFormOpen(false);
+                toast.success('Team member added');
+              },
+            },
+          )
+        }
         isSaving={createTeamMemberMut.isPending}
+      />
+
+      {/* Delete Standup Confirmation */}
+      <ConfirmDialog
+        open={deletingStandup !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingStandup(null);
+        }}
+        title="Delete this standup entry?"
+        confirmLabel="Delete"
+        loading={deleteStandupMut.isPending}
+        onConfirm={() => deletingStandup && handleDelete(deletingStandup.id)}
       />
     </div>
   );
@@ -295,7 +331,8 @@ function StandupCard({
             </Select>
             <button
               onClick={() => onDelete(standup.id)}
-              className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+              className="rounded p-1 text-muted-foreground opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
+              aria-label="Delete standup entry"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -512,6 +549,7 @@ function ProjectsView() {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null);
 
   const { data: projects, isLoading } = useProjects(
     statusFilter ? { status: statusFilter } : undefined,
@@ -538,10 +576,33 @@ function ProjectsView() {
 
   const handleSave = (data: any) => {
     if (editingProject) {
-      updateMut.mutate({ id: editingProject.id, data }, { onSuccess: () => setFormOpen(false) });
+      updateMut.mutate(
+        { id: editingProject.id, data },
+        {
+          onSuccess: () => {
+            setFormOpen(false);
+            toast.success('Project updated');
+          },
+        },
+      );
     } else {
-      createMut.mutate(data, { onSuccess: () => setFormOpen(false) });
+      createMut.mutate(data, {
+        onSuccess: () => {
+          setFormOpen(false);
+          toast.success('Project created');
+        },
+      });
     }
+  };
+
+  const handleDelete = (id: string) => {
+    deleteMut.mutate(id, {
+      onSuccess: () => {
+        setDeletingProject(null);
+        toast.success('Project deleted');
+      },
+      onError: () => setDeletingProject(null),
+    });
   };
 
   return (
@@ -642,13 +703,18 @@ function ProjectsView() {
                       <Badge variant={PROJECT_PRIORITY_BADGE[project.priority]} className="text-[9px]">
                         {project.priority}
                       </Badge>
-                      <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                        <button onClick={() => handleEdit(project)} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+                      <div className="flex gap-1 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
+                        <button
+                          onClick={() => handleEdit(project)}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          aria-label={`Edit project: ${project.name}`}
+                        >
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
                         <button
-                          onClick={() => { if (confirm('Delete project?')) deleteMut.mutate(project.id); }}
+                          onClick={() => setDeletingProject(project)}
                           className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          aria-label={`Delete project: ${project.name}`}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -682,6 +748,23 @@ function ProjectsView() {
         clients={clients ?? []}
         onSave={handleSave}
         isSaving={createMut.isPending || updateMut.isPending}
+      />
+
+      {/* Delete Project Confirmation */}
+      <ConfirmDialog
+        open={deletingProject !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingProject(null);
+        }}
+        title="Delete this project?"
+        description={
+          deletingProject
+            ? `"${deletingProject.name}" will be permanently removed.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        loading={deleteMut.isPending}
+        onConfirm={() => deletingProject && handleDelete(deletingProject.id)}
       />
     </div>
   );
@@ -822,6 +905,7 @@ function ClientsView() {
   const [formOpen, setFormOpen] = useState(false);
   const [followupFormOpen, setFollowupFormOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [deletingClient, setDeletingClient] = useState<Client | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<string>('');
 
   const { data: clients, isLoading } = useClients();
@@ -860,14 +944,45 @@ function ClientsView() {
 
   const handleSaveClient = (data: { name: string; company: string; contactInfo: string; notes: string }) => {
     if (editingClient) {
-      updateClientMut.mutate({ id: editingClient.id, data }, { onSuccess: () => setFormOpen(false) });
+      updateClientMut.mutate(
+        { id: editingClient.id, data },
+        {
+          onSuccess: () => {
+            setFormOpen(false);
+            toast.success('Client updated');
+          },
+        },
+      );
     } else {
-      createClientMut.mutate({ ...data, userId: '' }, { onSuccess: () => setFormOpen(false) });
+      createClientMut.mutate(
+        { ...data, userId: '' },
+        {
+          onSuccess: () => {
+            setFormOpen(false);
+            toast.success('Client added');
+          },
+        },
+      );
     }
   };
 
   const handleSaveFollowup = (data: any) => {
-    createFollowupMut.mutate(data, { onSuccess: () => setFollowupFormOpen(false) });
+    createFollowupMut.mutate(data, {
+      onSuccess: () => {
+        setFollowupFormOpen(false);
+        toast.success('Follow-up added');
+      },
+    });
+  };
+
+  const handleDeleteClient = (id: string) => {
+    deleteClientMut.mutate(id, {
+      onSuccess: () => {
+        setDeletingClient(null);
+        toast.success('Client deleted');
+      },
+      onError: () => setDeletingClient(null),
+    });
   };
 
   const handleCompleteFollowup = (followup: ClientFollowup) => {
@@ -946,13 +1061,18 @@ function ClientsView() {
                         <Badge variant="secondary" className="text-[9px]">{client.company}</Badge>
                       )}
                     </div>
-                    <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                      <button onClick={() => handleEdit(client)} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+                    <div className="flex gap-1 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
+                      <button
+                        onClick={() => handleEdit(client)}
+                        className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        aria-label={`Edit client: ${client.name}`}
+                      >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={() => { if (confirm('Delete client?')) deleteClientMut.mutate(client.id); }}
+                        onClick={() => setDeletingClient(client)}
                         className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        aria-label={`Delete client: ${client.name}`}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -1022,6 +1142,23 @@ function ClientsView() {
         clients={clients ?? []}
         onSave={handleSaveFollowup}
         isSaving={createFollowupMut.isPending}
+      />
+
+      {/* Delete Client Confirmation */}
+      <ConfirmDialog
+        open={deletingClient !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingClient(null);
+        }}
+        title="Delete this client?"
+        description={
+          deletingClient
+            ? `"${deletingClient.name}" and their follow-ups will be permanently removed.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        loading={deleteClientMut.isPending}
+        onConfirm={() => deletingClient && handleDeleteClient(deletingClient.id)}
       />
     </div>
   );
@@ -1143,6 +1280,7 @@ function MeetingsView() {
   const [formOpen, setFormOpen] = useState(false);
   const [actionItemFormOpen, setActionItemFormOpen] = useState(false);
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+  const [deletingMeeting, setDeletingMeeting] = useState<Meeting | null>(null);
 
   const { data: meetings, isLoading } = useMeetings();
   const { data: projects } = useProjects();
@@ -1154,11 +1292,21 @@ function MeetingsView() {
   const updateActionItemMut = useUpdateActionItem();
 
   const handleSaveMeeting = (data: any) => {
-    createMeetingMut.mutate(data, { onSuccess: () => setFormOpen(false) });
+    createMeetingMut.mutate(data, {
+      onSuccess: () => {
+        setFormOpen(false);
+        toast.success('Meeting added');
+      },
+    });
   };
 
   const handleSaveActionItem = (data: any) => {
-    createActionItemMut.mutate(data, { onSuccess: () => setActionItemFormOpen(false) });
+    createActionItemMut.mutate(data, {
+      onSuccess: () => {
+        setActionItemFormOpen(false);
+        toast.success('Action item added');
+      },
+    });
   };
 
   return (
@@ -1220,16 +1368,19 @@ function MeetingsView() {
                         <Badge variant="warning" className="text-[9px]">{openCount} open</Badge>
                       )}
                     </div>
-                    <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                    <div className="flex gap-1 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
                       <button
                         onClick={() => setSelectedMeetingId(isOpen ? null : meeting.id)}
                         className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        aria-label={isOpen ? 'Hide meeting details' : 'Show meeting details'}
+                        aria-expanded={isOpen}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={() => { if (confirm('Delete meeting?')) deleteMeetingMut.mutate(meeting.id); }}
+                        onClick={() => setDeletingMeeting(meeting)}
                         className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        aria-label="Delete meeting"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -1307,6 +1458,33 @@ function MeetingsView() {
         meetings={meetings ?? []}
         onSave={handleSaveActionItem}
         isSaving={createActionItemMut.isPending}
+      />
+
+      {/* Delete Meeting Confirmation */}
+      <ConfirmDialog
+        open={deletingMeeting !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingMeeting(null);
+        }}
+        title="Delete this meeting?"
+        description={
+          deletingMeeting
+            ? `The meeting on ${deletingMeeting.date} and its action items will be permanently removed.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        loading={deleteMeetingMut.isPending}
+        onConfirm={() => {
+          if (deletingMeeting) {
+            deleteMeetingMut.mutate(deletingMeeting.id, {
+              onSuccess: () => {
+                setDeletingMeeting(null);
+                toast.success('Meeting deleted');
+              },
+              onError: () => setDeletingMeeting(null),
+            });
+          }
+        }}
       />
     </div>
   );

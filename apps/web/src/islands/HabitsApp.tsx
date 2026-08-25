@@ -29,6 +29,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/ui';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { toast } from '@/components/ui/toast';
 import type { Habit } from '@kaizenlife/shared';
 
 type HabitCategory = NonNullable<Habit['category']>;
@@ -69,6 +71,7 @@ function HabitsContent() {
   const [filter, setFilter] = useState<HabitCategory | ''>('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
+  const [deletingHabit, setDeletingHabit] = useState<Habit | null>(null);
 
   const { data: habits, isLoading } = useHabits(
     filter ? { category: filter, active: true } : { active: true },
@@ -101,10 +104,18 @@ function HabitsContent() {
     setFormOpen(true);
   };
 
+  const handleDeleteRequest = (habit: Habit) => {
+    setDeletingHabit(habit);
+  };
+
   const handleDelete = (id: string) => {
-    if (confirm('Delete this habit?')) {
-      deleteMut.mutate(id);
-    }
+    deleteMut.mutate(id, {
+      onSuccess: () => {
+        setDeletingHabit(null);
+        toast.success('Habit deleted');
+      },
+      onError: () => setDeletingHabit(null),
+    });
   };
 
   const handleSave = (data: {
@@ -116,7 +127,12 @@ function HabitsContent() {
     if (editingHabit) {
       updateMut.mutate(
         { id: editingHabit.id, data },
-        { onSuccess: () => setFormOpen(false) },
+        {
+          onSuccess: () => {
+            setFormOpen(false);
+            toast.success('Habit updated');
+          },
+        },
       );
     } else {
       createMut.mutate(
@@ -127,7 +143,12 @@ function HabitsContent() {
           sortOrder: 0,
           targetCountPerPeriod: 1,
         },
-        { onSuccess: () => setFormOpen(false) },
+        {
+          onSuccess: () => {
+            setFormOpen(false);
+            toast.success('Habit created');
+          },
+        },
       );
     }
   };
@@ -184,10 +205,14 @@ function HabitsContent() {
         </div>
       ) : (habits ?? []).length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
+          <CardContent className="flex flex-col items-center justify-center gap-3 py-12">
             <p className="text-sm text-muted-foreground">
               No habits yet. Create your first habit to start tracking.
             </p>
+            <Button onClick={handleCreate} size="sm" variant="outline">
+              <Plus className="mr-1.5 h-4 w-4" />
+              Create your first habit
+            </Button>
           </CardContent>
         </Card>
       ) : (
@@ -198,7 +223,7 @@ function HabitsContent() {
               habit={habit}
               onToggle={handleToggle}
               onEdit={handleEdit}
-              onDelete={handleDelete}
+              onDelete={handleDeleteRequest}
               isToggling={logMut.isPending || undoMut.isPending}
             />
           ))}
@@ -213,6 +238,23 @@ function HabitsContent() {
         onSave={handleSave}
         isSaving={createMut.isPending || updateMut.isPending}
       />
+
+      {/* Delete Confirmation */}
+      <ConfirmDialog
+        open={deletingHabit !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingHabit(null);
+        }}
+        title="Delete this habit?"
+        description={
+          deletingHabit
+            ? `"${deletingHabit.name}" and its history will be permanently removed.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        loading={deleteMut.isPending}
+        onConfirm={() => deletingHabit && handleDelete(deletingHabit.id)}
+      />
     </div>
   );
 }
@@ -223,7 +265,7 @@ interface HabitItemProps {
   habit: HabitWithToday;
   onToggle: (habit: HabitWithToday) => void;
   onEdit: (habit: Habit) => void;
-  onDelete: (id: string) => void;
+  onDelete: (habit: Habit) => void;
   isToggling: boolean;
 }
 
@@ -243,7 +285,7 @@ function HabitItem({ habit, onToggle, onEdit, onDelete, isToggling }: HabitItemP
             'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border-2 transition-all',
             done
               ? 'border-emerald-500 bg-emerald-500 text-white shadow-sm'
-              : 'border-border hover:border-emerald-300 hover:bg-emerald-50',
+              : 'border-border hover:border-emerald-300 hover:bg-emerald-50 dark:hover:border-emerald-700 dark:hover:bg-emerald-950',
           )}
           aria-label={`Mark "${habit.name}" as ${done ? 'incomplete' : 'complete'}`}
         >
@@ -294,8 +336,8 @@ function HabitItem({ habit, onToggle, onEdit, onDelete, isToggling }: HabitItemP
           )}
         </div>
 
-        {/* Actions */}
-        <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        {/* Actions — always visible on touch devices (no hover available there) */}
+        <div className="flex gap-1 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
           <button
             onClick={() => setExpanded((prev) => !prev)}
             aria-label={`${expanded ? 'Hide' : 'Show'} stats for "${habit.name}"`}
@@ -311,12 +353,14 @@ function HabitItem({ habit, onToggle, onEdit, onDelete, isToggling }: HabitItemP
           <button
             onClick={() => onEdit(habit)}
             className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label={`Edit habit: ${habit.name}`}
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
           <button
-            onClick={() => onDelete(habit.id)}
+            onClick={() => onDelete(habit)}
             className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            aria-label={`Delete habit: ${habit.name}`}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
