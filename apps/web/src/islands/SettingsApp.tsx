@@ -25,8 +25,11 @@ import {
   AlertCircle,
   Clock,
   Bell,
+  LogOut,
 } from 'lucide-react';
 import { usePushNotifications } from '@/queries/push';
+
+const API_BASE = import.meta.env.PUBLIC_API_URL || 'http://localhost:3001';
 
 // ─── Default export ───────────────────────────────────────────────────────────
 
@@ -133,6 +136,7 @@ function ProfileCard() {
   const [deviceTz, setDeviceTz] = useState('');
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   // Sync draft inputs when the server record loads/changes.
   const [syncedAt, setSyncedAt] = useState<number | null>(null);
@@ -277,7 +281,33 @@ function ProfileCard() {
                 </p>
               ))}
 
-            <div className="flex justify-end">
+            <div className="flex items-center justify-between gap-3">
+              {/* Sign out — clears the session cookie server-side, then the
+                  api-client 401 flow (or this redirect) lands on /login. */}
+              <Button
+                type="button"
+                variant="outline"
+                disabled={signingOut}
+                onClick={async () => {
+                  setSigningOut(true);
+                  try {
+                    await fetch(`${API_BASE}/api/auth/logout`, {
+                      method: 'POST',
+                      credentials: 'include',
+                    });
+                  } catch {
+                    // Clearing locally regardless — the cookie is the session.
+                  }
+                  window.location.href = '/login';
+                }}
+              >
+                {signingOut ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <LogOut className="mr-1.5 h-4 w-4" />
+                )}
+                {signingOut ? 'Signing out...' : 'Sign out'}
+              </Button>
               <Button onClick={handleSave} disabled={!canSave}>
                 {updateMut.isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

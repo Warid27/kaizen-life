@@ -6,6 +6,7 @@ import type { Bindings, AppDb } from "./db/client";
 import { userIdMiddleware } from "./middleware/auth";
 import { apiError } from "./lib/api";
 import health from "./routes/health";
+import auth from "./routes/auth";
 import capture from "./routes/capture";
 import search from "./routes/search";
 import checkins from "./routes/checkins";
@@ -53,6 +54,9 @@ app.use(
       origin: origins,
       allowMethods: ["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
       allowHeaders: ["Content-Type", "Authorization"],
+      // Sessions ride a cookie on the API origin; the web app is a different
+      // origin, so cross-origin fetches need credentials + exact origins.
+      credentials: true,
       maxAge: 86400,
     })(c, next);
   },
@@ -81,6 +85,7 @@ app.onError((err, c) => {
 
 // ─── API Routes ──────────────────────────────────────────────
 app.route("/api", health);
+app.route("/api", auth);
 app.route("/api", capture);
 app.route("/api", search);
 app.route("/api", checkins);

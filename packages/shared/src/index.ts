@@ -17,6 +17,7 @@ export * from "./schemas/course";
 export * from "./schemas/assignment";
 export * from "./schemas/settings";
 export * from "./schemas/push";
+export * from "./schemas/auth";
 
 // Date utilities (canonical timezone-aware helpers)
 export * from "./utils/date";

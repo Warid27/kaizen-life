@@ -75,9 +75,25 @@ export async function apiFetch<T>(
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
+    // Sessions ride an HttpOnly cookie on the API origin; the web app lives
+    // on a different origin, so every request must opt into sending it.
+    credentials: 'include',
   });
 
   if (!res.ok) {
+    // Auth enforced (401 from a guarded route): bounce to login once, keeping
+    // the current page as the post-login destination. Auth endpoints and the
+    // login page itself are exempt to avoid loops.
+    if (
+      res.status === 401 &&
+      !path.startsWith('/api/auth') &&
+      typeof window !== 'undefined' &&
+      window.location.pathname !== '/login'
+    ) {
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/login?next=${next}`;
+    }
+
     let errorBody: unknown;
     try {
       errorBody = await res.json();

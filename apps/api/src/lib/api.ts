@@ -10,14 +10,17 @@ import type { ZodError } from "zod";
 export type ApiErrorCode =
   | "VALIDATION_ERROR"
   | "UNAUTHORIZED"
+  | "INVALID_CREDENTIALS"
+  | "EMAIL_TAKEN"
   | "NOT_FOUND"
   | "CONFLICT"
   | "BAD_REQUEST"
+  | "RATE_LIMITED"
   | "INTERNAL";
 
 export function apiError(
   c: Context,
-  status: 400 | 401 | 403 | 404 | 409 | 500,
+  status: 400 | 401 | 403 | 404 | 409 | 429 | 500,
   code: ApiErrorCode,
   message: string,
   details?: unknown,

@@ -18,6 +18,8 @@ export const users = sqliteTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     email: text("email"),
+    /** `pbkdf2$<iterations>$<salt>$<hash>` — null until the account claims credentials. */
+    passwordHash: text("password_hash"),
     timezone: text("timezone").notNull().default("Asia/Jakarta"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),

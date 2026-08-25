@@ -13,8 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Search hardening: `/api/search` now scopes per table with `LIMIT 20`, escapes LIKE wildcards, and filters by `userId`
 
 ### Security (auth groundwork)
+- **Real multi-account auth, end-to-end** (opt-in via `AUTH_SECRET`): `POST /api/auth/register` (PBKDF2-SHA256 hashing, per-user salt, iterations stored in the hash), `POST /api/auth/login` (generic invalid-credentials message — no user enumeration; case-insensitive email), `POST /api/auth/logout`, and `GET /api/auth/me`; sessions are stateless HMAC-SHA256 tokens in an HttpOnly/SameSite=Lax cookie (30-day TTL), verified by `userIdMiddleware` — when `AUTH_SECRET` is set every guarded route requires a session, when unset local dev stays frictionless with the shared `default-user` identity
+- First registration **claims the pre-auth `default-user` row** (sets name/email/password on it) so all existing data carries over seamlessly; later registrations create fresh users (true multi-account)
+- CORS now allows credentials (exact origins only) and the web API client sends `credentials: 'include'` + redirects to a new `/login` page (login/register tabs, per-field validation errors, rate-limit messaging) on any 401 from a guarded route; Settings gains a Sign out button
+- Rate limiting on register/login: 10 req/min per IP (fixed-window, per-isolate — documented limitation), 429 + `Retry-After`
 - Every UPDATE/DELETE now re-checks `userId` on the write itself (defense-in-depth): the last unguarded writes — monthly-review upsert/auto-summary regeneration (`reviews.ts`) and the habit-log upsert (`habits.ts`) — previously trusted an upstream SELECT for scoping; a future edit to that SELECT would have silently opened a cross-user write path
-- `users.email` now has a partial unique index (`uniq_users_email_live`, live rows only — migration 0004), so a soft-deleted account's address can be reused while one live account per email is enforced; prerequisite for real login
+- `users.email` now has a partial unique index (`uniq_users_email_live`, live rows only — migration 0004) and `users.password_hash` column (migration 0005); prerequisite for real login
+- 19 new auth tests (register/login/logout/me, session enforcement, tampered cookies, default-user claim, multi-account, rate limiting, dev-mode fallback) — suite now 143 passing
 
 ### Changed
 - Dialog primitive hardened for all forms: Escape-to-close, Tab focus trap with focus restoration on close, `role="dialog"` + `aria-modal` + `aria-labelledby`, background scroll lock, and nested-dialog stacking (only the topmost dialog responds to Escape/Tab)
