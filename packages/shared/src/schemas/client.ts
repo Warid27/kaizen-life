@@ -19,6 +19,7 @@ export type Client = z.infer<typeof ClientSchema>;
 
 export const CreateClientSchema = ClientSchema.omit({
   id: true,
+  userId: true,
   createdAt: true,
   updatedAt: true,
   deletedAt: true,
@@ -54,6 +55,7 @@ export type ClientFollowup = z.infer<typeof ClientFollowupSchema>;
 
 export const CreateClientFollowupSchema = ClientFollowupSchema.omit({
   id: true,
+  userId: true,
   createdAt: true,
   updatedAt: true,
   deletedAt: true,

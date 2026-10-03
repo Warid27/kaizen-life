@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import CommandPalette from '@/components/shared/CommandPalette';
 import { useUIStore } from '@/stores/ui';
 
@@ -7,7 +7,10 @@ import { useUIStore } from '@/stores/ui';
  * Bridges vanilla-JS topbar buttons to the Zustand store.
  */
 export default function CommandPaletteMount() {
+  const [mounted, setMounted] = useState(false);
+
   useEffect(() => {
+    setMounted(true);
     const store = useUIStore.getState;
 
     const handleOpenCmd = () => store().openCommandPalette();
@@ -21,6 +24,8 @@ export default function CommandPaletteMount() {
       document.removeEventListener('kaizenlife:quick-capture', handleQuickCapture);
     };
   }, []);
+
+  if (!mounted) return null;
 
   return <CommandPalette />;
 }

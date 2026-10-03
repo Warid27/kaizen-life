@@ -235,7 +235,7 @@ const iconSvgs: Record<string, string> = {
 
           <div class="flex items-center gap-2">
             <!-- Reminder Bell -->
-            <ReminderBell client:idle />
+            <ReminderBell client:only="react" />
 
             <!-- Command Palette Trigger (hidden on mobile) -->
             <button
@@ -307,7 +307,7 @@ const iconSvgs: Record<string, string> = {
     </nav>
 
     <!-- Command Palette (React Island) -->
-    <CommandPaletteMount client:idle />
+    <CommandPaletteMount client:only="react" />
 
     <script>
       // Register Service Worker for PWA

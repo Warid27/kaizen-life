@@ -53,11 +53,11 @@ export async function hashPassword(
     ["deriveBits"],
   );
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt, iterations },
+    { name: "PBKDF2", hash: "SHA-256", salt: salt as unknown as ArrayBuffer, iterations },
     key,
     256,
   );
-  return `pbkdf2$${iterations}$${toHex(salt)}$${toHex(new Uint8Array(bits))}`;
+  return `pbkdf2$${iterations}$${toHex(salt)}$${toHex(new Uint8Array(bits as ArrayBuffer) as unknown as Uint8Array)}`;
 }
 
 /** Constant-time byte comparison (no early exit on mismatch). */
@@ -88,11 +88,11 @@ export async function verifyPassword(
     ["deriveBits"],
   );
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt, iterations },
+    { name: "PBKDF2", hash: "SHA-256", salt: salt as unknown as ArrayBuffer, iterations },
     key,
     expected.length * 8,
   );
-  return timingSafeEqual(new Uint8Array(bits), expected);
+  return timingSafeEqual(new Uint8Array(bits as ArrayBuffer) as unknown as Uint8Array, expected);
 }
 
 // ─── Session tokens (HMAC-SHA256 signed, stateless) ─────────────────────────
@@ -126,8 +126,8 @@ async function hmac(secret: string, data: Uint8Array): Promise<Uint8Array> {
     false,
     ["sign"],
   );
-  const sig = await crypto.subtle.sign("HMAC", key, data);
-  return new Uint8Array(sig);
+  const sig = await crypto.subtle.sign("HMAC", key, data as unknown as ArrayBuffer);
+  return new Uint8Array(sig as ArrayBuffer) as unknown as Uint8Array;
 }
 
 /** Create a signed session token: `<b64url(payload)>.<b64url(hmac)>`. */

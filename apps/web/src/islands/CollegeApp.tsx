@@ -440,7 +440,11 @@ function CourseFormDialog({ open, onOpenChange, course, semesters, onSave, isSav
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !semesterId) return;
+    if (!name.trim()) return;
+    if (!semesterId) {
+      toast.error("Please create a semester first");
+      return;
+    }
     onSave({ name: name.trim(), code, lecturer, room, color, semesterId });
   };
 

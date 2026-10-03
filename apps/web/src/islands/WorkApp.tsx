@@ -263,7 +263,7 @@ function StandupView() {
         onOpenChange={setTeamFormOpen}
         onSave={(data) =>
           createTeamMemberMut.mutate(
-            { ...data, userId: '' },
+            data,
             {
               onSuccess: () => {
                 setTeamFormOpen(false);
@@ -955,7 +955,7 @@ function ClientsView() {
       );
     } else {
       createClientMut.mutate(
-        { ...data, userId: '' },
+        data,
         {
           onSuccess: () => {
             setFormOpen(false);

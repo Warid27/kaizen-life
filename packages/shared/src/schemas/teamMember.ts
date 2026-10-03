@@ -15,6 +15,7 @@ export type TeamMember = z.infer<typeof TeamMemberSchema>;
 
 export const CreateTeamMemberSchema = TeamMemberSchema.omit({
   id: true,
+  userId: true,
   createdAt: true,
   updatedAt: true,
   deletedAt: true,
