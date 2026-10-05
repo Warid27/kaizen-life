@@ -1,0 +1,255 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile in KaizenLife",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 200 },
+        "timezone": { "type": "string", "maxLength": 100 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Daily planner task item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 255 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "date": { "type": "string", "maxLength": 10 },
+        "startTime": { "type": "string", "maxLength": 10 },
+        "endTime": { "type": "string", "maxLength": 10 },
+        "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] },
+        "status": { "type": "string", "enum": ["todo", "in_progress", "done", "cancelled"] },
+        "projectId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "tags": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "priority", "status"]
+    },
+    "Habit": {
+      "title": "Habit",
+      "description": "Habit tracker item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 255 },
+        "icon": { "type": "string", "maxLength": 50 },
+        "category": { "type": "string", "maxLength": 100 },
+        "frequency": { "type": "string", "enum": ["daily", "weekly_n", "custom_days"] },
+        "targetCountPerPeriod": { "type": "number" },
+        "customDays": { "type": "string", "maxLength": 100 },
+        "active": { "type": "boolean" },
+        "sortOrder": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "name", "frequency", "targetCountPerPeriod"]
+    },
+    "HabitLog": {
+      "title": "HabitLog",
+      "description": "Daily habit log entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "habitId": { "type": "string" },
+        "date": { "type": "string", "maxLength": 10 },
+        "completedCount": { "type": "number" },
+        "targetCount": { "type": "number" },
+        "note": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "habitId", "date", "completedCount", "targetCount"]
+    },
+    "Checkin": {
+      "title": "Checkin",
+      "description": "Daily wellness and sleep check-in",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string", "maxLength": 10 },
+        "bedTime": { "type": "string", "maxLength": 10 },
+        "wakeTime": { "type": "string", "maxLength": 10 },
+        "napMinutes": { "type": "number" },
+        "totalSleepMinutes": { "type": "number" },
+        "sleepQuality": { "type": "number" },
+        "mood": { "type": "number" },
+        "energy": { "type": "number" },
+        "stress": { "type": "number" },
+        "note": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "date"]
+    },
+    "DiaryEntry": {
+      "title": "DiaryEntry",
+      "description": "Daily diary/reflection entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string", "maxLength": 10 },
+        "gratefulFor": { "type": "string", "maxLength": 2000 },
+        "lessonLearned": { "type": "string", "maxLength": 2000 },
+        "tomorrowFocus": { "type": "string", "maxLength": 2000 },
+        "freeText": { "type": "string", "maxLength": 10000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "date"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Work project",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 255 },
+        "clientId": { "type": "string" },
+        "status": { "type": "string", "enum": ["planning", "active", "on_hold", "completed", "cancelled"] },
+        "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] },
+        "deadline": { "type": "string", "maxLength": 10 },
+        "progressPct": { "type": "number" },
+        "description": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "name", "status", "priority"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Freelance/work client",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 255 },
+        "company": { "type": "string", "maxLength": 255 },
+        "contactInfo": { "type": "string", "maxLength": 500 },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "name"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial income or expense transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string", "maxLength": 10 },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "amountCents": { "type": "number" },
+        "currency": { "type": "string", "maxLength": 10 },
+        "category": { "type": "string", "maxLength": 100 },
+        "account": { "type": "string", "maxLength": 100 },
+        "note": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "date", "type", "amountCents", "currency", "category", "account"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "Annual, monthly, or weekly goal",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 255 },
+        "type": { "type": "string", "enum": ["annual", "monthly", "weekly"] },
+        "periodStart": { "type": "string", "maxLength": 10 },
+        "periodEnd": { "type": "string", "maxLength": 10 },
+        "targetValue": { "type": "number" },
+        "currentValue": { "type": "number" },
+        "unit": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["not_started", "in_progress", "completed", "abandoned"] },
+        "parentGoalId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "type", "periodStart", "periodEnd"]
+    },
+    "MonthlyReview": {
+      "title": "MonthlyReview",
+      "description": "Monthly reflection and review summary",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "year": { "type": "number" },
+        "month": { "type": "number" },
+        "biggestAchievement": { "type": "string", "maxLength": 3000 },
+        "biggestLesson": { "type": "string", "maxLength": 3000 },
+        "nextMonthPriorities": { "type": "string", "maxLength": 3000 },
+        "autoSummaryJson": { "type": "string", "maxLength": 10000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "year", "month"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/Task" },
+      "description": "User tasks"
+    },
+    "/users/{userId}/habits/{habitId}": {
+      "schema": { "$ref": "#/entities/Habit" },
+      "description": "User habits"
+    },
+    "/users/{userId}/habit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/HabitLog" },
+      "description": "User habit completion logs"
+    },
+    "/users/{userId}/checkins/{checkinId}": {
+      "schema": { "$ref": "#/entities/Checkin" },
+      "description": "User daily checkins"
+    },
+    "/users/{userId}/diary_entries/{entryId}": {
+      "schema": { "$ref": "#/entities/DiaryEntry" },
+      "description": "User diary entries"
+    },
+    "/users/{userId}/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "User projects"
+    },
+    "/users/{userId}/clients/{clientId}": {
+      "schema": { "$ref": "#/entities/Client" },
+      "description": "User clients"
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "User financial transactions"
+    },
+    "/users/{userId}/goals/{goalId}": {
+      "schema": { "$ref": "#/entities/Goal" },
+      "description": "User goals"
+    },
+    "/users/{userId}/monthly_reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/MonthlyReview" },
+      "description": "User monthly reviews"
+    }
+  }
+}

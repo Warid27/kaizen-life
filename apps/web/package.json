@@ -3,16 +3,16 @@
   "type": "module",
   "version": "0.0.1",
   "scripts": {
-    "dev": "astro dev",
+    "dev": "astro dev --host 0.0.0.0 --port 3000",
     "build": "astro build",
-    "preview": "astro preview",
+    "preview": "astro preview --host 0.0.0.0 --port 3000",
     "test": "vitest run --passWithNoTests",
     "astro": "astro"
   },
   "dependencies": {
     "@astrojs/react": "^4.4.2",
     "@astrojs/tailwind": "^6.0.2",
-    "@kaizenlife/shared": "workspace:*",
+    "@kaizenlife/shared": "*",
     "@tanstack/react-query": "^5.101.4",
     "@types/react": "^19.1.4",
     "@types/react-dom": "^19.1.5",

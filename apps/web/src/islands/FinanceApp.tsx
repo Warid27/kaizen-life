@@ -33,27 +33,11 @@ import {
   DEFAULT_CURRENCY,
 } from '@/lib/currency';
 import type { Currency } from '@kaizenlife/shared';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  Tooltip,
-  Legend,
-} from 'chart.js';
+import { Chart as ChartJS, registerables } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
+import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  Tooltip,
-  Legend,
-);
+ChartJS.register(...registerables);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -97,7 +81,9 @@ const INCOME_CATEGORIES = [
 export default function FinanceApp() {
   return (
     <QueryProvider>
-      <FinanceContent />
+      <ErrorBoundary>
+        <FinanceContent />
+      </ErrorBoundary>
     </QueryProvider>
   );
 }
@@ -336,14 +322,18 @@ function FinanceContent() {
             </div>
           )}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <CategoryBarChart
-              data={summary?.byCurrency?.[effectiveCcy]?.byCategory ?? []}
-              currency={effectiveCcy as Currency}
-            />
-            <BalanceLineChart
-              data={dailyByCcy[effectiveCcy] ?? []}
-              currency={effectiveCcy as Currency}
-            />
+            <ErrorBoundary fallback={<EmptyChart label="Unable to load category chart." />}>
+              <CategoryBarChart
+                data={summary?.byCurrency?.[effectiveCcy]?.byCategory ?? []}
+                currency={effectiveCcy as Currency}
+              />
+            </ErrorBoundary>
+            <ErrorBoundary fallback={<EmptyChart label="Unable to load balance chart." />}>
+              <BalanceLineChart
+                data={dailyByCcy[effectiveCcy] ?? []}
+                currency={effectiveCcy as Currency}
+              />
+            </ErrorBoundary>
           </div>
         </>
       )}

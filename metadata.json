@@ -1,0 +1,7 @@
+{
+  "name": "KaizenLife",
+  "description": "Become 1% Better Every Day - Personal productivity and life management dashboard",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

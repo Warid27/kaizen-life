@@ -27,9 +27,14 @@ health.get("/status", async (c) => {
   let dbLatencyMs: number | null = null;
   try {
     const t0 = Date.now();
-    const result = await c.env.DB.prepare("SELECT 1 AS one").first<{ one: number }>();
+    if (c.env?.DB && typeof c.env.DB.prepare === "function") {
+      const result = await c.env.DB.prepare("SELECT 1 AS one").first<{ one: number }>();
+      dbOk = result?.one === 1;
+    } else {
+      const db = c.get("db");
+      dbOk = Boolean(db);
+    }
     dbLatencyMs = Date.now() - t0;
-    dbOk = result?.one === 1;
   } catch {
     dbOk = false;
   }

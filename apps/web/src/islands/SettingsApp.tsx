@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { usePushNotifications } from '@/queries/push';
 
-const API_BASE = import.meta.env.PUBLIC_API_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.PUBLIC_API_URL ?? '';
 
 // ─── Default export ───────────────────────────────────────────────────────────
 

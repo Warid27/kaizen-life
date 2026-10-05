@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
-const API_BASE = import.meta.env.PUBLIC_API_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.PUBLIC_API_URL ?? '';
 
 interface AuthUser {
   id: string;

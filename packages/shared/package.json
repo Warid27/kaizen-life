@@ -10,13 +10,10 @@
     "./schemas/*": "./src/schemas/*.ts"
   },
   "scripts": {
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "zod": "^3.23.0"
-  },
-  "devDependencies": {
-    "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"

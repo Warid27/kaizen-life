@@ -44,18 +44,20 @@ app.use("*", secureHeaders());
 app.use(
   "*",
   async (c, next) => {
-    const isProd = c.env.ENVIRONMENT === "production";
-    const origins = [
+    const isProd = c.env?.ENVIRONMENT === "production";
+    const allowedOrigins = [
       "https://kaizen-life.warid.web.id",
       "https://kaizenlife-app.pages.dev",
-      ...(isProd ? [] : ["http://localhost:4321", "http://localhost:3001"]),
+      ...(isProd ? [] : ["http://localhost:4321", "http://localhost:3001", "http://localhost:3000"]),
     ];
     return cors({
-      origin: origins,
+      origin: (origin) => {
+        if (!origin) return "*";
+        if (allowedOrigins.includes(origin) || !isProd) return origin;
+        return null;
+      },
       allowMethods: ["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
       allowHeaders: ["Content-Type", "Authorization"],
-      // Sessions ride a cookie on the API origin; the web app is a different
-      // origin, so cross-origin fetches need credentials + exact origins.
       credentials: true,
       maxAge: 86400,
     })(c, next);
